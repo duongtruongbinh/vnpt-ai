@@ -1,4 +1,4 @@
-id,question,A,B,C,D,category
+qid,question,A,B,C,D,category
 Q001,"Năm 1945, sự kiện lịch sử quan trọng nào đã diễn ra ở Việt Nam?",Khởi nghĩa Yên Bái,Cách mạng tháng Tám thành công,Hiệp định Genève được ký kết,Chiến thắng Điện Biên Phủ,history
 Q002,Thủ đô của Việt Nam là thành phố nào?,Hồ Chí Minh,Đà Nẵng,Hà Nội,Huế,geography
 Q003,Món ăn nào sau đây được coi là đặc sản nổi tiếng nhất của Hà Nội?,Mì Quảng,Phở,Cơm tấm,Bún bò Huế,culture

@@ -16,7 +16,7 @@ from src.utils.llm import get_small_model, get_large_model
 class QuestionInput(BaseModel):
     """Input schema for a multiple-choice question."""
 
-    id: str = Field(description="Question identifier")
+    qid: str = Field(description="Question identifier")
     question: str = Field(description="Question text in Vietnamese")
     A: str = Field(description="Option A")
     B: str = Field(description="Option B")
@@ -27,9 +27,8 @@ class QuestionInput(BaseModel):
 
 class PredictionOutput(BaseModel):
     """Output schema for a prediction."""
-
-    id: str = Field(description="Question identifier")
-    answer: str = Field(description="Predicted answer: A, B, C, or D")
+    qid: str = Field(description="Question identifier")
+    answer: str = Field(description="Predicted answer: A, B, C, D or 'Từ chối trả lời'")
 
 
 def load_test_data(file_path: Path) -> list[QuestionInput]:
@@ -45,7 +44,7 @@ def load_test_data(file_path: Path) -> list[QuestionInput]:
 def question_to_state(q: QuestionInput) -> GraphState:
     """Convert QuestionInput to GraphState."""
     return {
-        "question_id": q.id,
+        "question_id": q.qid,
         "question": q.question,
         "option_a": q.A,
         "option_b": q.B,
@@ -53,13 +52,6 @@ def question_to_state(q: QuestionInput) -> GraphState:
         "option_d": q.D,
     }
 
-
-def result_to_prediction(result: dict, question_id: str) -> PredictionOutput:
-    """Convert graph result to PredictionOutput."""
-    answer = result.get("answer", "A")
-    if answer not in ["A", "B", "C", "D"]:
-        answer = "A"
-    return PredictionOutput(id=question_id, answer=answer)
 
 
 async def run_pipeline_async(
@@ -83,15 +75,10 @@ async def run_pipeline_async(
             state = question_to_state(q)
             result = await graph.ainvoke(state)
             
-            answer = result.get("answer", "A")
-            if answer not in ["A", "B", "C", "D"]:
-                answer = "A"
-            
+            answer = result["answer"]            
             route = result.get("route", "unknown")
-            print(f"  [Done] {q.id}: {answer} (Route: {route})")
-            return PredictionOutput(id=q.id, answer=answer)
-
-    print(f"[Pipeline] Processing {total} questions with concurrency limit = {batch_size}...")
+            print(f"  [Done] {q.qid}: {answer} (Route: {route})")
+            return PredictionOutput(qid=q.qid, answer=answer)
     
     tasks = [process_single_question(q) for q in questions]
     
@@ -108,10 +95,10 @@ async def run_pipeline_async(
 def save_predictions(predictions: list[PredictionOutput], output_path: Path) -> None:
     """Save predictions to CSV file."""
     with open(output_path, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=["id", "answer"])
+        writer = csv.DictWriter(f, fieldnames=["qid", "answer"])
         writer.writeheader()
         for pred in predictions:
-            writer.writerow({"qid": pred.id, "answer": pred.answer})
+            writer.writerow({"qid": pred.qid, "answer": pred.answer})
     print(f"[Pipeline] Predictions saved to: {output_path}")
 
 
@@ -143,7 +130,7 @@ async def async_main(batch_size: int = BATCH_SIZE) -> None:
     print("RESULTS SUMMARY")
     print("=" * 50)
     for pred in predictions:
-        print(f"  {pred.id}: {pred.answer}")
+        print(f"  {pred.qid}: {pred.answer}")
 
 
 def main(batch_size: int = BATCH_SIZE) -> None:
