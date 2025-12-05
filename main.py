@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 from src.config import BATCH_SIZE, DATA_INPUT_DIR, DATA_OUTPUT_DIR
 from src.graph import get_graph
 from src.state import GraphState
-from src.utils.ingestion import ingest_knowledge_base
+from src.utils.ingestion import ingest_all_data
 from src.utils.llm import get_large_model, get_small_model
 from src.utils.logging import (
     log_done,
@@ -41,14 +41,7 @@ class PredictionOutput(BaseModel):
 
 
 def _choices_to_options(choices: list[str]) -> dict[str, str]:
-    """Convert choices list to option dictionary (A, B, C, D, ...).
-    
-    Args:
-        choices: List of choice strings
-        
-    Returns:
-        Dictionary mapping option letters (A, B, C, ...) to choice text
-    """
+    """Convert choices list to option dictionary (A, B, C, D, ...)."""
     option_labels = string.ascii_uppercase
     options = {}
     for i, choice in enumerate(choices):
@@ -58,18 +51,7 @@ def _choices_to_options(choices: list[str]) -> dict[str, str]:
 
 
 def load_test_data(file_path: Path) -> list[QuestionInput]:
-    """Load test questions from JSON file.
-
-    Args:
-        file_path: Path to the test data JSON file
-
-    Returns:
-        List of QuestionInput objects
-
-    Raises:
-        ValueError: If file is not JSON or data format is invalid
-        FileNotFoundError: If file does not exist
-    """
+    """Load test questions from JSON file."""
     if not file_path.exists():
         raise FileNotFoundError(f"Test data file not found: {file_path}")
 
@@ -86,7 +68,7 @@ def load_test_data(file_path: Path) -> list[QuestionInput]:
     for item in data:
         if "choices" not in item or not isinstance(item["choices"], list):
             raise ValueError(f"Question {item.get('qid', 'unknown')} must have 'choices' as a list")
-        
+
         questions.append(QuestionInput(
             qid=item["qid"],
             question=item["question"],
@@ -98,12 +80,9 @@ def load_test_data(file_path: Path) -> list[QuestionInput]:
 
 
 def question_to_state(q: QuestionInput) -> GraphState:
-    """Convert QuestionInput to GraphState.
-    
-    Includes all choices for questions with more than 4 options.
-    """
+    """Convert QuestionInput to GraphState."""
     options = _choices_to_options(q.choices)
-    
+
     state: GraphState = {
         "question_id": q.qid,
         "question": q.question,
@@ -139,7 +118,7 @@ async def run_pipeline_async(
 ) -> list[PredictionOutput]:
     """Run pipeline with Semaphore for maximum throughput."""
     log_pipeline("Initializing knowledge base...")
-    ingest_knowledge_base(force=force_reingest)
+    ingest_all_data(force=force_reingest)
 
     graph = get_graph()
     total = len(questions)
@@ -156,25 +135,22 @@ async def run_pipeline_async(
 
             answer = result["answer"]
             route = result.get("route", "unknown")
-            
-            # Validate answer is within valid range
+
             num_choices = len(q.choices)
             option_labels = string.ascii_uppercase
             valid_answers = option_labels[:num_choices]
-            
+
             if answer not in valid_answers:
                 if answer.upper() in ["TỪ CHỐI TRẢ LỜI", "TỪCHỐITRẢLỜI"]:
                     answer = "Từ chối trả lời"
                 else:
-                    # Fallback to first valid option if answer is invalid
                     print_log(f"        [Warning] Invalid answer '{answer}' for {q.qid}, defaulting to A")
                     answer = "A"
-            
+
             log_done(f"{q.qid}: {answer} (Route: {route})")
             return PredictionOutput(qid=q.qid, answer=answer)
 
     tasks = [process_single_question(q) for q in questions]
-
     predictions = await asyncio.gather(*tasks)
 
     elapsed = time.perf_counter() - start_time
@@ -231,12 +207,6 @@ async def async_main(batch_size: int = BATCH_SIZE) -> None:
 
     output_file = DATA_OUTPUT_DIR / "submission.csv"
     save_predictions(predictions, output_file)
-
-    print_header("RESULTS SUMMARY")
-    for pred in predictions[:10]:
-        print(f"  {pred.qid}: {pred.answer}")
-    if len(predictions) > 10:
-        print(f"  ... and {len(predictions) - 10} more")
 
 
 def main(batch_size: int = BATCH_SIZE) -> None:

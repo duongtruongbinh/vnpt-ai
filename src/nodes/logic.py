@@ -5,7 +5,7 @@ import re
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 from langchain_experimental.utilities import PythonREPL
 
-from src.state import GraphState
+from src.state import GraphState, format_choices, get_choices_from_state
 from src.utils.llm import get_large_model
 from src.utils.logging import print_log
 
@@ -63,28 +63,12 @@ def _indent_code(code: str) -> str:
 
 
 def logic_solver_node(state: GraphState) -> dict:
+    """Solve math/logic questions using Python code execution."""
     llm = get_large_model()
-    
-    all_choices = state.get("all_choices", [])
-    if not all_choices:
-        all_choices = [
-            state.get("option_a", ""),
-            state.get("option_b", ""),
-            state.get("option_c", ""),
-            state.get("option_d", ""),
-        ]
-        all_choices = [c for c in all_choices if c]
-    
-    import string
-    option_labels = string.ascii_uppercase
-    choices_lines = []
-    for i, choice in enumerate(all_choices):
-        if i < len(option_labels):
-            choices_lines.append(f"{option_labels[i]}. {choice}")
-    
-    question_content = f"""
-    Câu hỏi: {state["question"]}
-    """ + "\n".join(choices_lines)
+    all_choices = get_choices_from_state(state)
+    choices_text = format_choices(all_choices)
+
+    question_content = f"Câu hỏi: {state['question']}\n{choices_text}"
 
     messages: list[BaseMessage] = [
         SystemMessage(content=CODE_AGENT_PROMPT),
@@ -118,8 +102,7 @@ def logic_solver_node(state: GraphState) -> dict:
                 output = output.strip() if output else "No output."
                 print_log(f"        [Logic] Code output: {output}")
 
-                num_choices = len(state.get("all_choices", [])) or 4
-                code_ans = extract_answer(output, max_choices=num_choices)
+                code_ans = extract_answer(output, max_choices=len(all_choices) or 4)
                 if code_ans:
                     print_log(f"        [Logic] Final Answer: {code_ans}")
                     return {"answer": code_ans}

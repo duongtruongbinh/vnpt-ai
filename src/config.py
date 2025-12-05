@@ -108,7 +108,7 @@ class Settings(BaseSettings):
     )
 
     # Chunking
-    chunk_size: int = 300
+    chunk_size: int = 500
     chunk_overlap: int = 50
     top_k_retrieval: int = 3
 

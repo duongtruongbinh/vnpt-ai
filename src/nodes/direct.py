@@ -1,15 +1,13 @@
 """Direct Answer node for reading comprehension or general questions without RAG."""
 
-import re
-import string
-
 from langchain_core.prompts import ChatPromptTemplate
 
-from src.state import GraphState
+from src.nodes.rag import extract_answer
+from src.state import GraphState, format_choices, get_choices_from_state
 from src.utils.llm import get_large_model
 from src.utils.logging import print_log
 
-DIRECT_SYSTEM_PROMPT = """Bạn là chuyên gia đọc hiểu và phân tích. 
+DIRECT_SYSTEM_PROMPT = """Bạn là chuyên gia đọc hiểu và phân tích.
 Nhiệm vụ: Trả lời câu hỏi dựa trên thông tin được cung cấp trong đề bài (nếu có) hoặc kiến thức chung.
 
 Lưu ý:
@@ -21,31 +19,12 @@ DIRECT_USER_PROMPT = """Câu hỏi: {question}
 {choices}"""
 
 
-def _format_choices_prompt(choices: list[str]) -> str:
-    """Format choices for prompt."""
-    option_labels = string.ascii_uppercase
-    lines = []
-    for i, choice in enumerate(choices):
-        if i < len(option_labels):
-            lines.append(f"{option_labels[i]}. {choice}")
-    return "\n".join(lines)
-
-
 def direct_answer_node(state: GraphState) -> dict:
     """Answer questions directly using Large Model (Skip Retrieval)."""
     print_log("        [Direct] Processing Reading Comprehension/General Question...")
-    
-    all_choices = state.get("all_choices", [])
-    if not all_choices:
-        all_choices = [
-            state.get("option_a", ""),
-            state.get("option_b", ""),
-            state.get("option_c", ""),
-            state.get("option_d", ""),
-        ]
-        all_choices = [c for c in all_choices if c]
-    
-    choices_text = _format_choices_prompt(all_choices)
+
+    all_choices = get_choices_from_state(state)
+    choices_text = format_choices(all_choices)
     
     llm = get_large_model()
     prompt = ChatPromptTemplate.from_messages([
@@ -61,9 +40,7 @@ def direct_answer_node(state: GraphState) -> dict:
 
     content = response.content.strip()
     print_log(f"        [Direct] Reasoning: {content}...")
-    
-    from src.nodes.rag import extract_answer 
-    answer = extract_answer(content, max_choices=len(all_choices))
-    
+
+    answer = extract_answer(content, max_choices=len(all_choices) or 4)
     print_log(f"        [Direct] Final Answer: {answer}")
     return {"answer": answer}

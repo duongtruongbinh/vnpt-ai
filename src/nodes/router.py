@@ -4,8 +4,7 @@ from typing import Literal
 
 from langchain_core.prompts import ChatPromptTemplate
 
-from src.config import settings
-from src.state import GraphState
+from src.state import GraphState, format_choices, get_choices_from_state
 from src.utils.llm import get_small_model
 from src.utils.logging import print_log
 
@@ -39,37 +38,11 @@ ROUTER_USER_PROMPT = """Câu hỏi: {question}
 Nhóm:"""
 
 
-def get_router_llm():
-    """Initialize router LLM (uses small model)."""
-    return get_small_model()
-
-
-def _format_choices_for_router(choices: list[str]) -> str:
-    """Format choices for router prompt."""
-    import string
-    option_labels = string.ascii_uppercase
-    lines = []
-    for i, choice in enumerate(choices):
-        if i < len(option_labels):
-            lines.append(f"{option_labels[i]}. {choice}")
-    return "\n".join(lines)
-
-
 def router_node(state: GraphState) -> dict:
     """Analyze question and determine routing path."""
-    all_choices = state.get("all_choices", [])
-    if not all_choices:
-        all_choices = [
-            state.get("option_a", ""),
-            state.get("option_b", ""),
-            state.get("option_c", ""),
-            state.get("option_d", ""),
-        ]
-        all_choices = [c for c in all_choices if c]
+    choices_text = format_choices(get_choices_from_state(state))
     
-    choices_text = _format_choices_for_router(all_choices)
-    
-    llm = get_router_llm()
+    llm = get_small_model()
     prompt = ChatPromptTemplate.from_messages([
         ("system", ROUTER_SYSTEM_PROMPT),
         ("human", ROUTER_USER_PROMPT),
@@ -96,61 +69,47 @@ def router_node(state: GraphState) -> dict:
 def route_question(state: GraphState) -> Literal["knowledge_rag", "logic_solver", "safety_guard", "direct_answer"]:
     """Conditional edge function to route to appropriate node."""
     question = state["question"].lower()
-    
-    direct_keywords = ["đoạn thông tin", "đoạn văn", "bài đọc", "căn cứ vào đoạn", "theo đoạn"]
-    if any(k in question for k in direct_keywords):
-        if len(question.split()) > 50:
-            print_log("        [Router] Fast-track: Direct Answer (Found Context block)")
-            return "direct_answer"
 
+    # Fast-track: Direct answer for reading comprehension
+    direct_keywords = ["đoạn thông tin", "đoạn văn", "bài đọc", "căn cứ vào đoạn", "theo đoạn"]
+    if any(k in question for k in direct_keywords) and len(question.split()) > 50:
+        print_log("        [Router] Fast-track: Direct Answer (Found Context block)")
+        return "direct_answer"
+
+    # Fast-track: Math/Logic for LaTeX or math keywords
     math_signals = [
-        "$", "\\frac", "^",  # LaTeX
-        "tính giá trị", "biểu thức", "phương trình", "hàm số", "đạo hàm", 
-        "xác suất", "lãi suất", "vận tốc", "gia tốc", "điện trở", 
-        "bao nhiêu gam", "mol", "nguyên tử khối"
+        "$", "\\frac", "^",
+        "tính giá trị", "biểu thức", "phương trình", "hàm số", "đạo hàm",
+        "xác suất", "lãi suất", "vận tốc", "gia tốc", "điện trở",
+        "bao nhiêu gam", "mol", "nguyên tử khối",
     ]
     if any(s in question for s in math_signals):
         print_log("        [Router] Fast-track: Math (Keywords/LaTeX detected)")
         return "logic_solver"
 
+    # Slow-track: Use LLM for classification
     print_log("        [Router] Slow-track: Using LLM to classify...")
     try:
-        all_choices = state.get("all_choices", [])
-        if not all_choices:
-            all_choices = [
-                state.get("option_a", ""),
-                state.get("option_b", ""),
-                state.get("option_c", ""),
-                state.get("option_d", ""),
-            ]
-            all_choices = [c for c in all_choices if c]
-        
-        choices_text = _format_choices_for_router(all_choices)
-        
+        choices_text = format_choices(get_choices_from_state(state))
         llm = get_small_model()
         prompt = ChatPromptTemplate.from_messages([
             ("system", ROUTER_SYSTEM_PROMPT),
             ("human", ROUTER_USER_PROMPT),
         ])
-        
+
         chain = prompt | llm
-        response = chain.invoke({
-            "question": state["question"],
-            "choices": choices_text,
-        })
-        
+        response = chain.invoke({"question": state["question"], "choices": choices_text})
         route = response.content.strip().lower()
         print_log(f"        [Router] LLM Decision: {route}")
 
         if "direct" in route:
             return "direct_answer"
-        elif "math" in route or "logic" in route:
+        if "math" in route or "logic" in route:
             return "logic_solver"
-        elif "toxic" in route or "danger" in route:
+        if "toxic" in route or "danger" in route:
             return "safety_guard"
-        else:
-            return "knowledge_rag"
-            
+        return "knowledge_rag"
+
     except Exception as e:
-        print_log(f"        [Router] Error in LLM classification: {e}. Fallback to RAG.")
+        print_log(f"        [Router] Error: {e}. Fallback to RAG.")
         return "knowledge_rag"

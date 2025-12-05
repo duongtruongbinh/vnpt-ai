@@ -1,6 +1,8 @@
 """Knowledge base ingestion utilities for Qdrant vector store."""
 
 import json
+import re
+import unicodedata
 from pathlib import Path
 
 import httpx
@@ -13,6 +15,9 @@ from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, VectorParams
 
 from src.config import DATA_INPUT_DIR, settings
+from src.utils.logging import log_pipeline, print_log
+
+SUPPORTED_EXTENSIONS = {".json", ".pdf", ".docx", ".txt"}
 
 _embeddings: Embeddings | None = None
 _qdrant_client: QdrantClient | None = None
@@ -25,7 +30,7 @@ class VNPTEmbeddings(Embeddings):
     def __init__(
         self,
         endpoint: str,
-        authorization: str,  # Full header value including "Bearer "
+        authorization: str,
         token_id: str,
         token_key: str,
         model_name: str = "vnptai_hackathon_embedding",
@@ -60,8 +65,7 @@ class VNPTEmbeddings(Embeddings):
                 response.raise_for_status()
                 data = response.json()
 
-            embeddings = [item["embedding"] for item in data["data"]]
-            return embeddings
+            return [item["embedding"] for item in data["data"]]
 
         except httpx.HTTPStatusError as e:
             raise RuntimeError(
@@ -76,7 +80,6 @@ class VNPTEmbeddings(Embeddings):
         """Embed a list of documents."""
         if not texts:
             return []
-        # Process in batches to avoid API limits
         batch_size = 32
         all_embeddings = []
         for i in range(0, len(texts), batch_size):
@@ -98,6 +101,24 @@ def get_device() -> str:
     return "cpu"
 
 
+def normalize_text(text: str) -> str:
+    """Normalize text for ingestion: clean whitespace, unicode, and formatting."""
+    if not text:
+        return ""
+    # Unicode NFKC normalization (composing characters)
+    text = unicodedata.normalize("NFKC", text)
+    # Remove zero-width characters
+    text = re.sub(r"[\u200b\u200c\u200d\ufeff]", "", text)
+    # Normalize whitespace: replace multiple spaces/tabs with single space
+    text = re.sub(r"[ \t]+", " ", text)
+    # Normalize newlines: max 2 consecutive newlines
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    # Strip leading/trailing whitespace from each line
+    lines = [line.strip() for line in text.splitlines()]
+    text = "\n".join(lines)
+    return text.strip()
+
+
 def get_embeddings() -> Embeddings:
     """Get or create embeddings model singleton (VNPT API or local HuggingFace)."""
     global _embeddings
@@ -113,7 +134,7 @@ def get_embeddings() -> Embeddings:
             token_id=settings.vnpt_embedding_token_id,
             token_key=settings.vnpt_embedding_token_key,
         )
-        print(f"[Embedding] VNPT API initialized: {settings.vnpt_embedding_endpoint}")
+        log_pipeline(f"VNPT Embedding API initialized: {settings.vnpt_embedding_endpoint}")
     else:
         device = get_device()
         _embeddings = HuggingFaceEmbeddings(
@@ -121,9 +142,10 @@ def get_embeddings() -> Embeddings:
             model_kwargs={"device": device},
             encode_kwargs={"normalize_embeddings": True},
         )
-        print(f"[Embedding] HuggingFace loaded: {settings.embedding_model}")
+        log_pipeline(f"HuggingFace Embedding loaded: {settings.embedding_model}")
 
     return _embeddings
+
 
 def get_qdrant_client() -> QdrantClient:
     """Get or create persistent Qdrant client singleton."""
@@ -133,6 +155,7 @@ def get_qdrant_client() -> QdrantClient:
         db_path.parent.mkdir(parents=True, exist_ok=True)
         _qdrant_client = QdrantClient(path=str(db_path))
     return _qdrant_client
+
 
 def get_vector_store() -> QdrantVectorStore:
     """Get the global vector store instance (Lazy load)."""
@@ -154,142 +177,92 @@ def _initialize_collection(
     vector_size: int,
     force_recreate: bool = False,
 ) -> None:
-    """Initialize Qdrant collection, creating it if needed.
-    
-    Args:
-        client: Qdrant client instance
-        collection_name: Name of the collection
-        vector_size: Size of the embedding vectors
-        force_recreate: If True, delete existing collection before creating
-    """
+    """Initialize Qdrant collection, creating if needed."""
     collection_exists = client.collection_exists(collection_name)
-    
+
     if collection_exists and force_recreate:
         client.delete_collection(collection_name)
         collection_exists = False
-    
+
     if not collection_exists:
         client.create_collection(
             collection_name=collection_name,
             vectors_config=VectorParams(size=vector_size, distance=Distance.COSINE),
         )
 
-def load_knowledge_base(file_path: Path | None = None) -> str:
-    """Load knowledge base text file."""
-    if file_path is None:
-        file_path = DATA_INPUT_DIR / "knowledge_base.txt"
-    if not file_path.exists():
-        raise FileNotFoundError(f"Knowledge base not found: {file_path}")
+
+def _load_pdf(file_path: Path) -> str:
+    """Load text from PDF file."""
+    try:
+        import pypdf
+    except ImportError:
+        raise ImportError("pypdf is required for PDF files. Install with: pip install pypdf")
+
+    reader = pypdf.PdfReader(str(file_path))
+    text = ""
+    for page in reader.pages:
+        text += page.extract_text() + "\n"
+    return text.strip()
+
+
+def _load_docx(file_path: Path) -> str:
+    """Load text from DOCX file."""
+    try:
+        import docx
+    except ImportError:
+        raise ImportError("python-docx is required for DOCX files. Install with: pip install python-docx")
+
+    doc = docx.Document(str(file_path))
+    return "\n".join([para.text for para in doc.paragraphs])
+
+
+def _load_txt(file_path: Path) -> str:
+    """Load text from TXT file."""
     with open(file_path, encoding="utf-8") as f:
         return f.read()
 
-def ingest_knowledge_base(file_path: Path | None = None, force: bool = False) -> QdrantVectorStore:
-    """Ingest knowledge base and update singleton."""
-    global _vector_store
-    
-    embeddings = get_embeddings()
-    client = get_qdrant_client()
-    collection_name = settings.qdrant_collection
 
-    collection_exists = client.collection_exists(collection_name)
+def _load_document(file_path: Path) -> tuple[str | None, dict | None]:
+    """Load document (PDF, DOCX, TXT), normalize text, and return (text, metadata).
 
-    if collection_exists and not force:
-        print(f"[Ingestion] Loading existing vector store from: {settings.vector_db_path_resolved}")
-        _vector_store = QdrantVectorStore(
-            client=client,
-            collection_name=collection_name,
-            embedding=embeddings,
-        )
-        return _vector_store
-
-    if force and collection_exists:
-        print(f"[Ingestion] Force re-ingesting: deleting existing collection '{collection_name}'")
-
-    print(f"[Ingestion] Ingesting knowledge base into collection '{collection_name}'...")
-    text = load_knowledge_base(file_path)
-
-    splitter = RecursiveCharacterTextSplitter(
-        chunk_size=settings.chunk_size,
-        chunk_overlap=settings.chunk_overlap,
-        separators=["\n\n", "\n", ".", " ", ""],
-    )
-    chunks = splitter.split_text(text)
-
-    sample_embedding = embeddings.embed_query("test")
-    _initialize_collection(client, collection_name, len(sample_embedding), force_recreate=force)
-
-    _vector_store = QdrantVectorStore(
-        client=client,
-        collection_name=collection_name,
-        embedding=embeddings,
-    )
-    
-    _vector_store.add_texts(chunks, batch_size=64)
-    print(f"[Ingestion] Ingested {len(chunks)} chunks into collection '{collection_name}'")
-    
-    return _vector_store
-
-
-def ingest_from_crawled_data(
-    json_path: Path | str,
-    collection_name: str | None = None,
-    append: bool = False,
-) -> QdrantVectorStore:
-    """Ingest crawled JSON data into Qdrant vector store.
-
-    Args:
-        json_path: Path to crawled JSON file.
-        collection_name: Optional collection name. If None, uses settings.
-        append: If True, append to existing collection. If False, recreate.
-
-    Returns:
-        QdrantVectorStore instance.
+    Returns (None, None) for unsupported or failed files.
     """
-    json_path = Path(json_path)
-    if not json_path.exists():
-        raise FileNotFoundError(f"Crawled data not found: {json_path}")
+    ext = file_path.suffix.lower()
 
+    try:
+        if ext == ".pdf":
+            text = _load_pdf(file_path)
+        elif ext == ".docx":
+            text = _load_docx(file_path)
+        elif ext == ".txt":
+            text = _load_txt(file_path)
+        else:
+            return None, None
+
+        text = normalize_text(text)
+        if not text:
+            return None, None
+
+        metadata = {
+            "source_file": str(file_path),
+            "file_name": file_path.name,
+            "file_type": ext[1:],
+        }
+        return text, metadata
+
+    except Exception as e:
+        print_log(f"        [Error] Failed to load {file_path.name}: {e}")
+        return None, None
+
+
+def _process_crawled_json(json_path: Path) -> tuple[list[str], list[dict]]:
+    """Process crawled JSON file, normalize content, and return (chunks, metadatas)."""
     with open(json_path, encoding="utf-8") as f:
         data = json.load(f)
 
     documents = data.get("documents", [])
     if not documents:
-        print(f"[Warning] No documents found in {json_path}")
-        coll_name = collection_name or settings.qdrant_collection
-        embeddings = get_embeddings()
-        client = get_qdrant_client()
-        return QdrantVectorStore(
-            client=client,
-            collection_name=coll_name,
-            embedding=embeddings,
-        )
-
-    texts = []
-    metadatas = []
-    for doc in documents:
-        content = doc.get("content", "")
-        if not content:
-            continue
-
-        keywords_raw = doc.get("keywords")
-        keywords_str = ""
-        if isinstance(keywords_raw, list):
-            keywords_str = ",".join([str(k) for k in keywords_raw if k])
-        elif isinstance(keywords_raw, str):
-            keywords_str = keywords_raw
-            
-        texts.append(content)
-        metadatas.append({
-            "source_url": doc.get("url", ""),
-            "title": doc.get("title", ""),
-            "summary": doc.get("summary", ""),
-            "topic": data.get("topic", ""),
-            "keywords": keywords_str,
-            "domain": data.get("domain", ""),
-        })
-
-    if not texts:
-        raise ValueError(f"No content found in documents from {json_path}")
+        return [], []
 
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=settings.chunk_size,
@@ -299,131 +272,156 @@ def ingest_from_crawled_data(
 
     all_chunks = []
     all_metadatas = []
-    for text, metadata in zip(texts, metadatas):
-        chunks = splitter.split_text(text)
+
+    for doc in documents:
+        content = normalize_text(doc.get("content", ""))
+        if not content:
+            continue
+
+        keywords_raw = doc.get("keywords")
+        keywords_str = ""
+        if isinstance(keywords_raw, list):
+            keywords_str = ",".join([str(k) for k in keywords_raw if k])
+        elif isinstance(keywords_raw, str):
+            keywords_str = keywords_raw
+
+        base_metadata = {
+            "source_url": doc.get("url", ""),
+            "title": normalize_text(doc.get("title", "")),
+            "summary": normalize_text(doc.get("summary", "")),
+            "topic": data.get("topic", ""),
+            "keywords": keywords_str,
+            "domain": data.get("domain", ""),
+            "source_file": str(json_path),
+        }
+
+        chunks = splitter.split_text(content)
         for i, chunk in enumerate(chunks):
-            all_chunks.append(chunk)
-            chunk_metadata = metadata.copy()
+            chunk_metadata = base_metadata.copy()
             chunk_metadata["chunk_index"] = i
             chunk_metadata["total_chunks"] = len(chunks)
+            all_chunks.append(chunk)
             all_metadatas.append(chunk_metadata)
 
+    return all_chunks, all_metadatas
+
+
+def _scan_data_files(base_dir: Path) -> list[Path]:
+    """Recursively scan directory for supported files."""
+    files = []
+    for ext in SUPPORTED_EXTENSIONS:
+        files.extend(base_dir.rglob(f"*{ext}"))
+    return sorted(files)
+
+
+def ingest_all_data(
+    base_dir: Path | None = None,
+    force: bool = False,
+) -> QdrantVectorStore:
+    """Ingest all data from crawled JSON and documents into Qdrant.
+
+    Recursively scans base_dir for JSON, PDF, DOCX, and TXT files.
+
+    Args:
+        base_dir: Directory to scan (default: DATA_INPUT_DIR)
+        force: If True, wipe collection and re-ingest everything
+
+    Returns:
+        QdrantVectorStore instance
+    """
+    global _vector_store
+
+    base_dir = base_dir or DATA_INPUT_DIR
     embeddings = get_embeddings()
     client = get_qdrant_client()
+    collection_name = settings.qdrant_collection
 
-    coll_name = collection_name or settings.qdrant_collection
-    collection_exists = client.collection_exists(coll_name)
+    collection_exists = client.collection_exists(collection_name)
 
-    if not append or not collection_exists:
+    if collection_exists and not force:
+        log_pipeline(f"Loading existing vector store: {settings.vector_db_path_resolved}")
+        _vector_store = QdrantVectorStore(
+            client=client,
+            collection_name=collection_name,
+            embedding=embeddings,
+        )
+        return _vector_store
+
+    if force and collection_exists:
+        log_pipeline(f"Force re-ingesting: deleting collection '{collection_name}'")
+
+    files = _scan_data_files(base_dir)
+    if not files:
+        log_pipeline(f"No supported files found in {base_dir}")
         sample_embedding = embeddings.embed_query("test")
-        _initialize_collection(client, coll_name, len(sample_embedding), force_recreate=not append)
+        _initialize_collection(client, collection_name, len(sample_embedding), force_recreate=force)
+        _vector_store = QdrantVectorStore(
+            client=client,
+            collection_name=collection_name,
+            embedding=embeddings,
+        )
+        return _vector_store
 
-    vector_store = QdrantVectorStore(
+    log_pipeline(f"Found {len(files)} files to ingest from {base_dir}")
+
+    # Initialize collection
+    sample_embedding = embeddings.embed_query("test")
+    _initialize_collection(client, collection_name, len(sample_embedding), force_recreate=force)
+
+    _vector_store = QdrantVectorStore(
         client=client,
-        collection_name=coll_name,
+        collection_name=collection_name,
         embedding=embeddings,
     )
 
-    vector_store.add_texts(all_chunks, metadatas=all_metadatas)
+    splitter = RecursiveCharacterTextSplitter(
+        chunk_size=settings.chunk_size,
+        chunk_overlap=settings.chunk_overlap,
+        separators=["\n\n", "\n", ".", " ", ""],
+    )
 
-    print(f"[Ingestion] Ingested {len(all_chunks)} chunks from {len(documents)} documents")
-    print(f"[Ingestion] Collection: '{coll_name}'")
-    print(f"[Ingestion] Source: {data.get('source', json_path)}")
-    return vector_store
+    total_chunks = 0
+    total_docs = 0
+    failed_files = 0
 
+    for file_path in files:
+        try:
+            if file_path.suffix.lower() == ".json":
+                chunks, metadatas = _process_crawled_json(file_path)
+                if chunks:
+                    _vector_store.add_texts(chunks, metadatas=metadatas)
+                    total_chunks += len(chunks)
+                    total_docs += 1
+                    print_log(f"        [Ingest] {file_path.name}: {len(chunks)} chunks")
+                else:
+                    print_log(f"        [Warning] {file_path.name}: No content found")
+            else:
+                text, metadata = _load_document(file_path)
+                if text and metadata:
+                    chunks = splitter.split_text(text)
+                    metadatas = []
+                    for i, chunk in enumerate(chunks):
+                        chunk_meta = metadata.copy()
+                        chunk_meta["chunk_index"] = i
+                        chunk_meta["total_chunks"] = len(chunks)
+                        metadatas.append(chunk_meta)
 
-def load_pdf(file_path: Path) -> str:
-    """Load text from PDF file.
-    
-    Raises:
-        ImportError: If pypdf is not installed
-        Exception: If file cannot be read
-    """
-    try:
-        import pypdf
-    except ImportError:
-        raise ImportError("pypdf is required for PDF files. Install with: pip install pypdf")
-    
-    try:
-        reader = pypdf.PdfReader(str(file_path))
-        text = ""
-        for page in reader.pages:
-            text += page.extract_text() + "\n"
-        return text.strip()
-    except Exception as e:
-        raise RuntimeError(f"Failed to read PDF file {file_path}: {e}") from e
+                    _vector_store.add_texts(chunks, metadatas=metadatas)
+                    total_chunks += len(chunks)
+                    total_docs += 1
+                    print_log(f"        [Ingest] {file_path.name}: {len(chunks)} chunks")
 
+        except Exception as e:
+            print_log(f"        [Error] {file_path.name}: {e}")
+            failed_files += 1
+            continue
 
-def load_docx(file_path: Path) -> str:
-    """Load text from DOCX file.
-    
-    Raises:
-        ImportError: If python-docx is not installed
-        Exception: If file cannot be read
-    """
-    try:
-        import docx
-    except ImportError:
-        raise ImportError("python-docx is required for DOCX files. Install with: pip install python-docx")
-    
-    try:
-        doc = docx.Document(str(file_path))
-        return "\n".join([para.text for para in doc.paragraphs])
-    except Exception as e:
-        raise RuntimeError(f"Failed to read DOCX file {file_path}: {e}") from e
+    log_pipeline(f"Ingestion complete: {total_docs} files, {total_chunks} chunks")
+    if failed_files > 0:
+        log_pipeline(f"Failed files: {failed_files}")
+    log_pipeline(f"Collection: '{collection_name}'")
 
-
-def load_txt(file_path: Path) -> str:
-    """Load text from TXT file.
-    
-    Raises:
-        IOError: If file cannot be read
-    """
-    try:
-        with open(file_path, encoding="utf-8") as f:
-            return f.read()
-    except Exception as e:
-        raise IOError(f"Failed to read TXT file {file_path}: {e}") from e
-
-
-def load_file(file_path: Path) -> tuple[str | None, dict | None]:
-    """Load file and return (text, metadata).
-    
-    Args:
-        file_path: Path to file (PDF, DOCX, TXT, or JSON)
-        
-    Returns:
-        Tuple of (text, metadata) or (None, None) for JSON/unsupported files
-        
-    Raises:
-        ImportError: If required library is missing for PDF/DOCX
-        IOError: If file cannot be read
-    """
-    ext = file_path.suffix.lower()
-    
-    if ext == ".json":
-        return None, None
-    
-    try:
-        if ext == ".pdf":
-            text = load_pdf(file_path)
-        elif ext == ".docx":
-            text = load_docx(file_path)
-        elif ext == ".txt":
-            text = load_txt(file_path)
-        else:
-            print(f"[Warning] Unsupported file type: {ext}")
-            return None, None
-        
-        metadata = {
-            "source_file": str(file_path),
-            "file_name": file_path.name,
-            "file_type": ext[1:],
-        }
-        return text, metadata
-    except (ImportError, IOError, RuntimeError) as e:
-        print(f"[Error] Failed to load {file_path.name}: {e}")
-        return None, None
+    return _vector_store
 
 
 def ingest_files(
@@ -431,70 +429,63 @@ def ingest_files(
     collection_name: str | None = None,
     append: bool = False,
 ) -> int:
-    """Ingest multiple files (PDF, DOCX, TXT, JSON) into Qdrant.
-    
+    """Ingest specific files into Qdrant.
+
     Args:
         file_paths: List of file paths to ingest
-        collection_name: Optional collection name. If None, uses settings.
-        append: If True, append to existing collection. If False, recreate.
-        
+        collection_name: Optional collection name (default from settings)
+        append: If True, append to existing collection; otherwise recreate
+
     Returns:
-        Total number of chunks ingested
+        Number of chunks ingested
     """
+    collection_name = collection_name or settings.qdrant_collection
     embeddings = get_embeddings()
     client = get_qdrant_client()
-    
-    coll_name = collection_name or settings.qdrant_collection
-    collection_exists = client.collection_exists(coll_name)
-    
-    if not append or not collection_exists:
-        sample_embedding = embeddings.embed_query("test")
-        _initialize_collection(client, coll_name, len(sample_embedding), force_recreate=not append)
-    
+
+    sample_embedding = embeddings.embed_query("test")
+    _initialize_collection(client, collection_name, len(sample_embedding), force_recreate=not append)
+
     vector_store = QdrantVectorStore(
         client=client,
-        collection_name=coll_name,
+        collection_name=collection_name,
         embedding=embeddings,
     )
-    
+
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=settings.chunk_size,
         chunk_overlap=settings.chunk_overlap,
         separators=["\n\n", "\n", ".", " ", ""],
     )
-    
+
     total_chunks = 0
-    total_docs = 0
-    
+
     for file_path in file_paths:
-        if file_path.suffix.lower() == ".json":
-            try:
-                ingest_from_crawled_data(file_path, coll_name, append=True)
-                with open(file_path, encoding="utf-8") as f:
-                    data = json.load(f)
-                total_docs += len(data.get("documents", []))
-                print(f"  [OK] {file_path.name}")
-            except Exception as e:
-                print(f"  [Error] {file_path.name}: {e}")
+        try:
+            if file_path.suffix.lower() == ".json":
+                chunks, metadatas = _process_crawled_json(file_path)
+                if chunks:
+                    vector_store.add_texts(chunks, metadatas=metadatas)
+                    total_chunks += len(chunks)
+                    print(f"[Ingest] {file_path.name}: {len(chunks)} chunks")
+            else:
+                text, metadata = _load_document(file_path)
+                if text and metadata:
+                    chunks = splitter.split_text(text)
+                    metadatas = []
+                    for i, chunk in enumerate(chunks):
+                        chunk_meta = metadata.copy()
+                        chunk_meta["chunk_index"] = i
+                        chunk_meta["total_chunks"] = len(chunks)
+                        metadatas.append(chunk_meta)
+
+                    vector_store.add_texts(chunks, metadatas=metadatas)
+                    total_chunks += len(chunks)
+                    print(f"[Ingest] {file_path.name}: {len(chunks)} chunks")
+
+        except Exception as e:
+            print(f"[Error] {file_path.name}: {e}")
             continue
-        
-        text, metadata = load_file(file_path)
-        if not text:
-            continue
-        
-        chunks = splitter.split_text(text)
-        metadatas = []
-        for i, chunk in enumerate(chunks):
-            chunk_meta = metadata.copy()
-            chunk_meta["chunk_index"] = i
-            chunk_meta["total_chunks"] = len(chunks)
-            metadatas.append(chunk_meta)
-        
-        vector_store.add_texts(chunks, metadatas=metadatas)
-        total_chunks += len(chunks)
-        total_docs += 1
-        print(f"  [OK] {file_path.name} ({len(chunks)} chunks)")
-    
-    print(f"\n[Ingest] Total: {total_docs} documents, {total_chunks} chunks")
-    print(f"[Ingest] Collection: '{coll_name}'")
+
+    print(f"[Done] Total: {total_chunks} chunks in '{collection_name}'")
     return total_chunks
