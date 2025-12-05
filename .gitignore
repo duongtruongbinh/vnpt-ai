@@ -51,7 +51,6 @@ Thumbs.db
 *.tmp
 *.bak
 *.cache
-repomix-output.xml
 
 # Jupyter
 .ipynb_checkpoints/
@@ -67,3 +66,5 @@ htmlcov/
 .mypy_cache/
 .dmypy.json
 dmypy.json
+
+repomix-output.xml

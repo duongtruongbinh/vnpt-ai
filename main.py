@@ -1,13 +1,16 @@
 """Entry point for running the RAG pipeline on test data."""
 
+import asyncio
 import csv
+import time
 from pathlib import Path
 
 from pydantic import BaseModel, Field
 
-from src.config import DATA_INPUT_DIR, DATA_OUTPUT_DIR
+from src.config import DATA_INPUT_DIR, DATA_OUTPUT_DIR, BATCH_SIZE
 from src.graph import GraphState, get_graph
 from src.utils.ingestion import ingest_knowledge_base
+from src.utils.llm import get_small_model, get_large_model
 
 
 class QuestionInput(BaseModel):
@@ -39,47 +42,65 @@ def load_test_data(file_path: Path) -> list[QuestionInput]:
     return questions
 
 
-def run_pipeline(questions: list[QuestionInput], force_reingest: bool = False) -> list[PredictionOutput]:
-    """Run the RAG pipeline on a list of questions.
+def question_to_state(q: QuestionInput) -> GraphState:
+    """Convert QuestionInput to GraphState."""
+    return {
+        "question_id": q.id,
+        "question": q.question,
+        "option_a": q.A,
+        "option_b": q.B,
+        "option_c": q.C,
+        "option_d": q.D,
+    }
+
+
+def result_to_prediction(result: dict, question_id: str) -> PredictionOutput:
+    """Convert graph result to PredictionOutput."""
+    answer = result.get("answer", "A")
+    if answer not in ["A", "B", "C", "D"]:
+        answer = "A"
+    return PredictionOutput(id=question_id, answer=answer)
+
+
+async def run_pipeline_async(
+    questions: list[QuestionInput],
+    force_reingest: bool = False,
+    batch_size: int = BATCH_SIZE,
+) -> list[PredictionOutput]:
+    """Run pipeline with Semaphore for maximum throughput."""
     
-    Args:
-        questions: List of questions to process.
-        force_reingest: If True, force re-ingestion of knowledge base. Defaults to False.
-    """
     print("[Pipeline] Initializing knowledge base...")
     ingest_knowledge_base(force=force_reingest)
 
     graph = get_graph()
-    predictions = []
+    total = len(questions)
+    start_time = time.perf_counter()
+    
+    sem = asyncio.Semaphore(batch_size)
 
-    for i, q in enumerate(questions, 1):
-        print(f"\n[Pipeline] Processing question {i}/{len(questions)}: {q.id}")
-        print(f"  Question: {q.question}")
-        print(f"  A. {q.A}")
-        print(f"  B. {q.B}")
-        print(f"  C. {q.C}")
-        print(f"  D. {q.D}")
+    async def process_single_question(q: QuestionInput):
+        async with sem:
+            state = question_to_state(q)
+            result = await graph.ainvoke(state)
+            
+            answer = result.get("answer", "A")
+            if answer not in ["A", "B", "C", "D"]:
+                answer = "A"
+            
+            route = result.get("route", "unknown")
+            print(f"  [Done] {q.id}: {answer} (Route: {route})")
+            return PredictionOutput(id=q.id, answer=answer)
 
-        state: GraphState = {
-            "question_id": q.id,
-            "question": q.question,
-            "option_a": q.A,
-            "option_b": q.B,
-            "option_c": q.C,
-            "option_d": q.D,
-        }
+    print(f"[Pipeline] Processing {total} questions with concurrency limit = {batch_size}...")
+    
+    tasks = [process_single_question(q) for q in questions]
+    
+    predictions = await asyncio.gather(*tasks)
 
-        result = graph.invoke(state)
-
-        answer = result.get("answer", "A")
-        if answer not in ["A", "B", "C", "D"]:
-            answer = "A"
-
-        route = result.get("route", "unknown")
-        print(f"  Route: {route}")
-        print(f"  Answer: {answer}")
-
-        predictions.append(PredictionOutput(id=q.id, answer=answer))
+    elapsed = time.perf_counter() - start_time
+    throughput = total / elapsed if elapsed > 0 else 0
+    print(f"\n[Pipeline] Completed {total} questions in {elapsed:.2f}s "
+          f"({throughput:.2f} req/s)")
 
     return predictions
 
@@ -90,12 +111,16 @@ def save_predictions(predictions: list[PredictionOutput], output_path: Path) -> 
         writer = csv.DictWriter(f, fieldnames=["id", "answer"])
         writer.writeheader()
         for pred in predictions:
-            writer.writerow({"id": pred.id, "answer": pred.answer})
-    print(f"\n[Pipeline] Predictions saved to: {output_path}")
+            writer.writerow({"qid": pred.id, "answer": pred.answer})
+    print(f"[Pipeline] Predictions saved to: {output_path}")
 
 
-def main() -> None:
-    """Main entry point."""
+async def async_main(batch_size: int = BATCH_SIZE) -> None:
+    """Async main entry point."""
+    get_small_model()
+    get_large_model()
+    print("[Main] Models warmed up ready.")
+    
     input_file = DATA_INPUT_DIR / "private_test.csv"
     if not input_file.exists():
         input_file = DATA_INPUT_DIR / "public_test.csv"
@@ -107,9 +132,9 @@ def main() -> None:
 
     print(f"[Main] Loading test data from: {input_file}")
     questions = load_test_data(input_file)
-    print(f"[Main] Loaded {len(questions)} questions")
+    print(f"[Main] Loaded {len(questions)} questions (batch_size={batch_size})")
 
-    predictions = run_pipeline(questions)
+    predictions = await run_pipeline_async(questions, batch_size=batch_size)
 
     output_file = DATA_OUTPUT_DIR / "pred.csv"
     save_predictions(predictions, output_file)
@@ -119,6 +144,11 @@ def main() -> None:
     print("=" * 50)
     for pred in predictions:
         print(f"  {pred.id}: {pred.answer}")
+
+
+def main(batch_size: int = BATCH_SIZE) -> None:
+    """Main entry point that runs the async pipeline."""
+    asyncio.run(async_main(batch_size=batch_size))
 
 
 if __name__ == "__main__":

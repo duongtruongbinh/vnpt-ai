@@ -8,23 +8,23 @@ from src.config import settings
 from src.graph import GraphState
 from src.utils.llm import get_small_model
 
-ROUTER_SYSTEM_PROMPT = """Nhiệm vụ: Phân loại câu hỏi vào 1 trong 3 nhóm chính xác tuyệt đối:
+ROUTER_SYSTEM_PROMPT = """Nhiệm vụ: Phân loại câu hỏi vào 1 trong 3 nhóm chính xác tuyệt đối.
+
+QUAN TRỌNG: Bạn phải kiểm tra kỹ nội dung của CÂU HỎI và cả 4 LỰA CHỌN (A, B, C, D).
 
 1. "toxic":
-   - Nội dung vi phạm pháp luật Việt Nam (cờ bạc, ma túy, mại dâm).
-   - Nội dung phản động, xuyên tạc lịch sử, chính trị nhạy cảm.
-   - Hướng dẫn gây hại (chế tạo vũ khí, tự tử, bạo lực).
-   - Ngôn từ thù ghét, phân biệt vùng miền, xúc phạm danh nhân.
+   - Nếu BẤT KỲ lựa chọn nào (A, B, C, hoặc D) chứa nội dung vi phạm pháp luật, kích động bạo lực, phản động, hoặc trái thuần phong mỹ tục.
+   - Nội dung cờ bạc, ma túy, mại dâm, chế tạo vũ khí, tự tử.
+   - Ngôn từ thù ghét, xúc phạm danh nhân/lãnh đạo.
+   -> Ưu tiên xếp vào nhóm này ngay lập tức nếu phát hiện.
 
 2. "math":
    - Các bài toán đố, tính toán số học, hình học, xác suất.
-   - Các câu hỏi cần lập luận, logic, tìm quy luật ...
+   - Các câu hỏi cần lập luận, logic, tìm quy luật.
 
 3. "knowledge":
    - Kiến thức Lịch sử, Địa lý, Văn hóa, Xã hội.
    - Định nghĩa khái niệm, kiến thức khoa học thường thức (không tính toán).
-
-CHÚ Ý: Nếu câu hỏi mang tính giáo dục, điều luật, tình thế (ví dụ: "Tác hại của ma túy là gì?"), hãy xếp vào "knowledge". Chỉ xếp vào "toxic" nếu câu hỏi cổ xúy hoặc hướng dẫn làm điều xấu.
 
 Chỉ trả về đúng 1 từ: math, toxic, hoặc knowledge."""
 

@@ -13,6 +13,10 @@ RAG_SYSTEM_PROMPT = """Bạn là trợ lý AI. Dựa vào văn bản cung cấp,
 Văn bản:
 {context}
 
+QUY TẮC AN TOÀN:
+- Kiểm tra kỹ 4 lựa chọn A, B, C, D.
+- Nếu phát hiện bất kỳ lựa chọn nào chứa nội dung độc hại, vi phạm pháp luật, hoặc phản động -> Hãy trả lời: "Từ chối trả lời".
+
 Yêu cầu:
 1. Suy luận ngắn gọn (1-2 câu) dựa trên văn bản.
 2. Kết thúc bằng dòng: "Đáp án: X" (X là A, B, C, hoặc D)."""
@@ -63,10 +67,10 @@ def knowledge_rag_node(state: GraphState) -> dict:
 
 def safety_guard_node(state: GraphState) -> dict:
     """Handle toxic/sensitive questions with refusal response."""
-    print("        [Safety] Blocked toxic content.")
+    print("        [Safety] Blocked toxic content/options.")
     return {
-        "answer": "D",
-        "context": "Nội dung không phù hợp. Hệ thống từ chối trả lời.",
+        "answer": "Từ chối trả lời", 
+        "context": "Nội dung hoặc lựa chọn không phù hợp. Hệ thống từ chối trả lời.",
     }
 
 def extract_answer(response: str) -> str:
