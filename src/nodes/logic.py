@@ -5,46 +5,13 @@ import re
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 from langchain_experimental.utilities import PythonREPL
 
+from src.prompts import CODE_AGENT_PROMPT
 from src.state import GraphState, format_choices, get_choices_from_state
-from src.utils.text_utils import extract_answer
 from src.utils.llm import get_large_model
 from src.utils.logging import print_log
+from src.data_processing.answer import extract_answer
 
 _python_repl = PythonREPL()
-
-
-CODE_AGENT_PROMPT = """Bạn là chuyên gia lập trình Python giải quyết các bài toán trắc nghiệm.
-
-QUY TẮC VÀNG:
-1. Import đầy đủ: `import math`, `import sympy as sp`, `import numpy as np`.
-2. Xử lý sai số: Khi so sánh kết quả tính toán (float) với các lựa chọn, KHÔNG dùng `==`. Hãy dùng `math.isclose(a, b, rel_tol=1e-5)` hoặc `abs(a - b) < 1e-5`.
-3. Định dạng Output: Bắt buộc in kết quả cuối cùng theo cú pháp: `print(f"Đáp án: {key}")` (Ví dụ: "Đáp án: A").
-
-CẤU TRÚC CODE MẪU:
-```python
-import math
-
-# 1. Tính toán
-result = 10 / 3
-
-# 2. Định nghĩa options
-options = {"A": 3.33, "B": 3.0, "C": 4.0, "D": 5.0}
-
-# 3. So sánh thông minh
-found = False
-for key, val in options.items():
-    if math.isclose(result, val, rel_tol=1e-4):
-        print(f"Đáp án: {key}")
-        found = True
-        break
-
-# 4. Fallback nếu không khớp chính xác
-if not found:
-    # Tìm giá trị gần nhất
-    closest_key = min(options, key=lambda k: abs(options[k] - result))
-    print(f"Đáp án: {closest_key}")
-        
-Chỉ trả về block code Python, không giải thích thêm."""
 
 
 def extract_python_code(text: str) -> str | None:

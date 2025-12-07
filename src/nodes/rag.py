@@ -3,27 +3,12 @@
 from langchain_core.prompts import ChatPromptTemplate
 
 from src.config import settings
+from src.prompts import RAG_SYSTEM_PROMPT, RAG_USER_PROMPT
 from src.state import GraphState, format_choices, get_choices_from_state
 from src.utils.ingestion import get_vector_store
 from src.utils.llm import get_large_model
 from src.utils.logging import print_log
-from src.utils.text_utils import extract_answer
-
-RAG_SYSTEM_PROMPT = """Bạn là trợ lý AI trung thực. Nhiệm vụ của bạn là trả lời câu hỏi trắc nghiệm CHỈ DỰA TRÊN đoạn văn bản được cung cấp.
-
-Văn bản:
-{context}
-
-Quy tắc bắt buộc:
-1. Nếu văn bản chứa thông tin trả lời: Hãy suy luận logic và kết luận bằng "Đáp án: X".
-2. Nếu văn bản KHÔNG chứa thông tin liên quan:
-   - Tuyệt đối KHÔNG sử dụng kiến thức bên ngoài.
-   - Hãy chọn đáp án mà bạn cho là hợp lý nhất về mặt logic chung (common sense).
-
-Định dạng trả về cuối cùng phải chứa dòng: "Đáp án: X"."""
-
-RAG_USER_PROMPT = """Câu hỏi: {question}
-{choices}"""
+from src.data_processing.answer import extract_answer
 
 
 def knowledge_rag_node(state: GraphState) -> dict:

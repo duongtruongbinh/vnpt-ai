@@ -10,7 +10,6 @@ Supports multiple crawl modes:
 import json
 import os
 import time
-import unicodedata
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import unquote, urlparse
@@ -20,6 +19,7 @@ from firecrawl import FirecrawlApp
 from tqdm import tqdm
 
 from src.config import DATA_CRAWLED_DIR
+from src.utils.common import remove_diacritics
 
 load_dotenv()
 
@@ -68,12 +68,6 @@ class WebCrawler:
             print(f"[Crawler] Error scraping {url}: {e}")
         return None
     
-    @staticmethod
-    def _remove_diacritics(text: str) -> str:
-        """Remove Vietnamese diacritics: 'văn hóa' -> 'van hoa'"""
-        nfkd = unicodedata.normalize('NFKD', text)
-        return ''.join(c for c in nfkd if not unicodedata.combining(c)).lower()
-    
     def crawl_single(self, url: str) -> list[dict]:
         """Mode: single - Crawl only the given URL."""
         print(f"[Crawler] Mode: single | URL: {url}")
@@ -89,7 +83,7 @@ class WebCrawler:
             raise ValueError("Topic required for links mode. Use comma to separate keywords.")
         
         keywords = [k.strip() for k in topic.split(",") if k.strip()]
-        keywords_normalized = [self._remove_diacritics(k).replace("_", " ").replace("-", " ") for k in keywords]
+        keywords_normalized = [remove_diacritics(k).replace("_", " ").replace("-", " ") for k in keywords]
         
         print(f"[Crawler] Mode: links | URL: {url}")
         print(f"[Crawler] Keywords: {keywords}")
@@ -141,7 +135,7 @@ class WebCrawler:
             if any(p.lower() in decoded_url.lower() for p in skip_patterns):
                 continue
             
-            normalized_url = self._remove_diacritics(decoded_url).replace("_", " ").replace("-", " ")
+            normalized_url = remove_diacritics(decoded_url).replace("_", " ").replace("-", " ")
             
             for i, kw_norm in enumerate(keywords_normalized):
                 if kw_norm in normalized_url:

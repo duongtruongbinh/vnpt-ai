@@ -1,9 +1,11 @@
+"""Entry point for Docker deployment (simple mode without checkpointing)."""
+
 import asyncio
 from pathlib import Path
 
 from src.config import BATCH_SIZE, DATA_INPUT_DIR, DATA_OUTPUT_DIR
-from src.pipeline import run_pipeline_async, save_predictions
 from src.data_processing.loaders import load_test_data_from_csv
+from src.pipeline import run_pipeline_async, save_predictions
 from src.utils.llm import get_large_model, get_small_model
 from src.utils.logging import log_main
 

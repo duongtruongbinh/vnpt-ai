@@ -19,7 +19,7 @@ dist/
 wheels/
 
 # Environment variables
-.env
+*.env
 .env.local
 .env.*.local
 
@@ -69,6 +69,6 @@ dmypy.json
 
 repomix-output.xml
 
-
+output/
 test_data/
 test_output/

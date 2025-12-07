@@ -2,23 +2,11 @@
 
 from langchain_core.prompts import ChatPromptTemplate
 
+from src.prompts import DIRECT_SYSTEM_PROMPT, DIRECT_USER_PROMPT
 from src.state import GraphState, format_choices, get_choices_from_state
-from src.utils.text_utils import extract_answer
 from src.utils.llm import get_large_model
 from src.utils.logging import print_log
-
-DIRECT_SYSTEM_PROMPT = """Bạn là chuyên gia đọc hiểu và phân tích.
-Nhiệm vụ: Trả lời câu hỏi dựa trên thông tin được cung cấp trong đề bài (nếu có) hoặc kiến thức chung.
-
-Lưu ý:
-1. Nếu đề bài có đoạn văn, CHỈ dựa vào đoạn văn đó để suy luận.
-2. Suy luận ngắn gọn, logic.
-- Với câu hỏi về ngày tháng, con số: So sánh chính xác từng ký tự.
-- Nếu câu hỏi yêu cầu tìm từ sai/đúng: Đối chiếu từng phương án với văn bản.
-3. Kết thúc bằng: "Đáp án: X" (X là một trong các lựa chọn A, B, C, D, ...)."""
-
-DIRECT_USER_PROMPT = """Câu hỏi: {question}
-{choices}"""
+from src.data_processing.answer import extract_answer
 
 
 def direct_answer_node(state: GraphState) -> dict:

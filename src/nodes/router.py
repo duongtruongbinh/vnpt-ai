@@ -5,36 +5,10 @@ from typing import Literal
 
 from langchain_core.prompts import ChatPromptTemplate
 
+from src.prompts import ROUTER_SYSTEM_PROMPT, ROUTER_USER_PROMPT
 from src.state import GraphState, format_choices, get_choices_from_state
 from src.utils.llm import get_small_model
 from src.utils.logging import print_log
-
-ROUTER_SYSTEM_PROMPT = """Nhiệm vụ: Phân loại câu hỏi vào 1 trong 4 nhóm chính xác tuyệt đối.
-
-QUAN TRỌNG: Bạn phải kiểm tra kỹ nội dung của CÂU HỎI và tất cả các LỰA CHỌN.
-
-1. "toxic":
-   - Câu hỏi yêu cầu hướng dẫn làm việc phi pháp (trốn thuế, làm giả giấy tờ, chế tạo vũ khí, tấn công mạng...).
-   - Câu hỏi về nội dung đồi trụy, phản động, kích động bạo lực.
-
-2. "direct": 
-   - Câu hỏi chứa đoạn văn bản, đoạn thông tin dài.
-   - Yêu cầu đọc hiểu từ đoạn văn đó.
-
-3. "math":
-   - Bài tập Toán, Lý, Hóa, Sinh cần tính toán.
-   - Các câu hỏi cần lập luận, logic, tìm quy luật.
-   
-4. "rag": 
-   - Kiến thức Lịch sử, Địa lý, Văn hóa, Xã hội, Văn học, Luật pháp, Y học (lý thuyết).
-   - Những câu hỏi cần tra cứu kiến thức mà không cần tính toán phức tạp.
-
-Chỉ trả về đúng 1 từ: toxic, math, direct, hoặc rag."""
-
-ROUTER_USER_PROMPT = """Câu hỏi: {question}
-{choices}
-
-Nhóm:"""
 
 
 def _find_refusal_option(state: GraphState) -> str | None:

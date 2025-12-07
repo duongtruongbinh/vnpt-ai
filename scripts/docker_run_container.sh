@@ -20,7 +20,7 @@ if command -v nvidia-smi &> /dev/null && nvidia-smi &> /dev/null; then
     GPU_FLAG="--gpus all"
 fi
 
-docker run --rm \
+docker run \
     $GPU_FLAG \
     -v "$TEST_DATA_DIR:/data:ro" \
     -v "$OUTPUT_DIR:/output" \
