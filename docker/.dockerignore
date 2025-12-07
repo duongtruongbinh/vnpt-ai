@@ -29,7 +29,6 @@ wheels/
 *.swo
 *~
 
-data/
 *.json
 *.csv
 *.pdf
