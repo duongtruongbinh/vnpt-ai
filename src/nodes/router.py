@@ -5,10 +5,10 @@ from typing import Literal
 
 from langchain_core.prompts import ChatPromptTemplate
 
-from src.prompts import ROUTER_SYSTEM_PROMPT, ROUTER_USER_PROMPT
 from src.state import GraphState, format_choices, get_choices_from_state
 from src.utils.llm import get_small_model
 from src.utils.logging import print_log
+from src.utils.prompts import load_prompt
 
 
 def _find_refusal_option(state: GraphState) -> str | None:
@@ -35,15 +35,16 @@ def _classify_with_llm(state: GraphState) -> str:
     """Classify question using LLM."""
     choices_text = format_choices(get_choices_from_state(state))
     llm = get_small_model()
+    
+    system_prompt = load_prompt("router.j2", "system")
+    user_prompt = load_prompt("router.j2", "user", question=state["question"], choices=choices_text)
+    
     prompt = ChatPromptTemplate.from_messages([
-        ("system", ROUTER_SYSTEM_PROMPT),
-        ("human", ROUTER_USER_PROMPT),
+        ("system", system_prompt),
+        ("human", user_prompt),
     ])
     chain = prompt | llm
-    response = chain.invoke({
-        "question": state["question"],
-        "choices": choices_text,
-    })
+    response = chain.invoke({})
     return response.content.strip().lower()
 
 

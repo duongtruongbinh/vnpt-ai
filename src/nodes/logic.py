@@ -5,11 +5,11 @@ import re
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 from langchain_experimental.utilities import PythonREPL
 
-from src.prompts import CODE_AGENT_PROMPT
+from src.data_processing.answer import extract_answer
 from src.state import GraphState, format_choices, get_choices_from_state
 from src.utils.llm import get_large_model
 from src.utils.logging import print_log
-from src.data_processing.answer import extract_answer
+from src.utils.prompts import load_prompt
 
 _python_repl = PythonREPL()
 
@@ -22,10 +22,8 @@ def extract_python_code(text: str) -> str | None:
     return None
 
 
-
-
 def _indent_code(code: str) -> str:
-    """Format code to make it easier to read in the terminal"""
+    """Format code to make it easier to read in the terminal."""
     return "\n".join(f"        {line}" for line in code.splitlines())
 
 
@@ -35,14 +33,15 @@ def logic_solver_node(state: GraphState) -> dict:
     all_choices = get_choices_from_state(state)
     choices_text = format_choices(all_choices)
 
-    question_content = f"Câu hỏi: {state['question']}\n{choices_text}"
+    system_prompt = load_prompt("logic_solver.j2", "system")
+    user_prompt = load_prompt("logic_solver.j2", "user", question=state["question"], choices=choices_text)
 
     messages: list[BaseMessage] = [
-        SystemMessage(content=CODE_AGENT_PROMPT),
-        HumanMessage(content=question_content)
+        SystemMessage(content=system_prompt),
+        HumanMessage(content=user_prompt)
     ]
 
-    raw_responses: list[str] = []  # Collect all LLM responses for debugging
+    raw_responses: list[str] = []
 
     max_steps = 5
     for step in range(max_steps):

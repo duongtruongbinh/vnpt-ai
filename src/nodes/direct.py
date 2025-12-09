@@ -2,11 +2,11 @@
 
 from langchain_core.prompts import ChatPromptTemplate
 
-from src.prompts import DIRECT_SYSTEM_PROMPT, DIRECT_USER_PROMPT
+from src.data_processing.answer import extract_answer
 from src.state import GraphState, format_choices, get_choices_from_state
 from src.utils.llm import get_large_model
 from src.utils.logging import print_log
-from src.data_processing.answer import extract_answer
+from src.utils.prompts import load_prompt
 
 
 def direct_answer_node(state: GraphState) -> dict:
@@ -17,16 +17,17 @@ def direct_answer_node(state: GraphState) -> dict:
     choices_text = format_choices(all_choices)
     
     llm = get_large_model()
+    
+    system_prompt = load_prompt("direct_answer.j2", "system")
+    user_prompt = load_prompt("direct_answer.j2", "user", question=state["question"], choices=choices_text)
+    
     prompt = ChatPromptTemplate.from_messages([
-        ("system", DIRECT_SYSTEM_PROMPT),
-        ("human", DIRECT_USER_PROMPT),
+        ("system", system_prompt),
+        ("human", user_prompt),
     ])
 
     chain = prompt | llm
-    response = chain.invoke({
-        "question": state["question"],
-        "choices": choices_text,
-    })
+    response = chain.invoke({})
 
     content = response.content.strip()
     print_log(f"        [Direct] Reasoning: {content}...")

@@ -3,12 +3,12 @@
 from langchain_core.prompts import ChatPromptTemplate
 
 from src.config import settings
-from src.prompts import RAG_SYSTEM_PROMPT, RAG_USER_PROMPT
+from src.data_processing.answer import extract_answer
 from src.state import GraphState, format_choices, get_choices_from_state
 from src.utils.ingestion import get_vector_store
 from src.utils.llm import get_large_model
 from src.utils.logging import print_log
-from src.data_processing.answer import extract_answer
+from src.utils.prompts import load_prompt
 
 
 def knowledge_rag_node(state: GraphState) -> dict:
@@ -29,21 +29,20 @@ def knowledge_rag_node(state: GraphState) -> dict:
     choices_text = format_choices(all_choices)
 
     llm = get_large_model()
+    
+    system_prompt = load_prompt("rag.j2", "system", context=context)
+    user_prompt = load_prompt("rag.j2", "user", question=state["question"], choices=choices_text)
+    
     prompt = ChatPromptTemplate.from_messages([
-        ("system", RAG_SYSTEM_PROMPT),
-        ("human", RAG_USER_PROMPT),
+        ("system", system_prompt),
+        ("human", user_prompt),
     ])
 
     chain = prompt | llm
-    response = chain.invoke({
-        "context": context,
-        "question": state["question"],
-        "choices": choices_text,
-    })
+    response = chain.invoke({})
     content = response.content.strip()
     print_log(f"        [RAG] Reasoning: {content}")
 
     answer = extract_answer(content, max_choices=len(all_choices) or 4)
     print_log(f"        [RAG] Final Answer: {answer}")
     return {"answer": answer, "context": context, "raw_response": content}
-

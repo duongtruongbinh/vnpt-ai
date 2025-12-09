@@ -186,11 +186,15 @@ vnpt-ai/
 ├── src/
 │   ├── data_processing/  # Loaders, Formatting, Answer Extraction
 │   ├── nodes/            # LangGraph Nodes (Router, RAG, Logic, Direct)
-│   ├── utils/            # Utilities (LLM, Embeddings, Checkpointing)
+│   ├── templates/        # Jinja2 prompt templates (.j2 files)
+│   │   ├── router.j2     # Router classification prompts
+│   │   ├── rag.j2        # RAG node prompts
+│   │   ├── logic_solver.j2  # Code agent prompts
+│   │   └── direct_answer.j2 # Direct answer prompts
+│   ├── utils/            # Utilities (LLM, Embeddings, Checkpointing, Prompts)
 │   ├── config.py         # Configuration settings
 │   ├── graph.py          # Workflow definition
 │   ├── pipeline.py       # Core execution logic
-│   ├── prompts.py        # System prompts
 │   └── state.py          # Graph state schema
 ├── app.py                # Deployment entry point (CSV input)
 ├── main.py               # Dev entry point (JSON input + Resume)

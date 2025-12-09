@@ -24,14 +24,7 @@ from src.utils.logging import log_done, log_pipeline, log_stats, print_log
 
 
 def sort_questions_by_qid(questions: list[QuestionInput]) -> list[QuestionInput]:
-    """Sort questions by qid using natural sorting.
-    
-    Args:
-        questions: List of QuestionInput objects
-        
-    Returns:
-        Sorted list of QuestionInput objects
-    """
+    """Sort questions by qid using natural sorting."""
     qid_to_question = {q.qid: q for q in questions}
     sorted_qids = sort_qids(list(qid_to_question.keys()))
     return [qid_to_question[qid] for qid in sorted_qids]
@@ -43,19 +36,18 @@ async def run_pipeline_async(
     batch_size: int = BATCH_SIZE,
 ) -> list[PredictionOutput]:
     """Run pipeline without checkpointing (for app.py deployment).
-    
+
     Args:
         questions: List of questions to process
         force_reingest: If True, force re-ingestion of knowledge base
         batch_size: Number of concurrent questions to process
-        
+
     Returns:
         List of PredictionOutput objects sorted by qid
     """
     log_pipeline("Initializing knowledge base...")
     ingest_all_data(force=force_reingest)
 
-    # Sort questions by qid for ordered processing
     questions = sort_questions_by_qid(questions)
 
     graph = get_graph()
@@ -68,7 +60,7 @@ async def run_pipeline_async(
     async def process_single_question(q: QuestionInput) -> None:
         async with sem:
             print_log(f"\n[{q.qid}] {q.question}")
-            print(format_choices_display(q.choices))
+            print_log(format_choices_display(q.choices))
             state = question_to_state(q)
             result = await graph.ainvoke(state)
 
@@ -93,7 +85,6 @@ async def run_pipeline_async(
     throughput = total / elapsed if elapsed > 0 else 0
     log_stats(f"Completed {total} questions in {elapsed:.2f}s ({throughput:.2f} req/s)")
 
-    # Return predictions in sorted qid order
     sorted_qids = sort_qids(list(results.keys()))
     return [results[qid] for qid in sorted_qids]
 
@@ -105,23 +96,22 @@ async def run_pipeline_with_checkpointing(
     batch_size: int = BATCH_SIZE,
 ) -> int:
     """Run pipeline with JSONL checkpointing for resume capability.
-    
+
     Questions are processed in qid order. Results are appended to log file
     immediately for fault tolerance, then consolidated at the end.
-    
+
     Args:
         questions: List of questions to process (already filtered for unprocessed)
         log_path: Path to JSONL log file for checkpointing
         force_reingest: If True, force re-ingestion of knowledge base
         batch_size: Number of concurrent questions to process
-        
+
     Returns:
         Count of newly processed questions
     """
     log_pipeline("Initializing knowledge base...")
     ingest_all_data(force=force_reingest)
 
-    # Sort questions by qid for ordered processing
     questions = sort_questions_by_qid(questions)
     log_pipeline(f"Processing {len(questions)} questions in qid order...")
 
@@ -133,18 +123,18 @@ async def run_pipeline_with_checkpointing(
     sem = asyncio.Semaphore(batch_size)
     stop_event = asyncio.Event()
 
-    async def process_single_question(q: QuestionInput) -> bool:
+    async def process_single_question(q: QuestionInput) -> None:
         nonlocal processed_count
         if stop_event.is_set():
             return
-        
+
         async with sem:
             if stop_event.is_set():
                 return
             print_log(f"\n[{q.qid}] {q.question}")
-            print(format_choices_display(q.choices))
+            print_log(format_choices_display(q.choices))
             state = question_to_state(q)
-            # await asyncio.sleep(25.0)
+
             try:
                 result = await graph.ainvoke(state)
                 answer = result.get("answer", "A")
@@ -173,7 +163,7 @@ async def run_pipeline_with_checkpointing(
 
                 log_done(f"{q.qid}: {answer} (Route: {route})")
                 processed_count += 1
-                
+
             except Exception as e:
                 if is_rate_limit_error(e):
                     print_log(f"        [CRITICAL] Rate Limit Detected on {q.qid}: {e}")
@@ -188,17 +178,16 @@ async def run_pipeline_with_checkpointing(
         log_pipeline("!!! PIPELINE STOPPED DUE TO RATE LIMIT !!!")
         log_pipeline("Consolidating logs and generating emergency submission...")
         consolidate_log_file(log_path)
-        
+
         output_file = DATA_OUTPUT_DIR / "submission_emergency.csv"
         total_entries = generate_csv_from_log(log_path, output_file)
         log_pipeline(f"Saved emergency submission with {total_entries} entries to: {output_file}")
-        
+
         sys.exit(0)
 
-    # Consolidate log file (sort by qid) before exiting
     log_pipeline("Consolidating log file...")
     consolidate_log_file(log_path)
-    
+
     elapsed = time.perf_counter() - start_time
     throughput = total / elapsed if elapsed > 0 else 0
     log_stats(f"Processed {processed_count}/{total} questions in {elapsed:.2f}s ({throughput:.2f} req/s)")
@@ -220,11 +209,10 @@ def save_predictions(
     """
     if ensure_dir:
         output_path.parent.mkdir(parents=True, exist_ok=True)
-    
-    # Sort predictions by qid
+
     sorted_qids = sort_qids([p.qid for p in predictions])
     pred_dict = {p.qid: p for p in predictions}
-    
+
     with open(output_path, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=["qid", "answer"])
         writer.writeheader()
