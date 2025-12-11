@@ -13,7 +13,7 @@ class GraphState(TypedDict, total=False):
     option_b: str
     option_c: str
     option_d: str
-    all_choices: list[str]  # All choices for questions with more than 4 options
+    all_choices: list[str]  
     route: str
     context: str
     answer: str

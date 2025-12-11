@@ -1,0 +1,24 @@
+{# RAG Node Prompt Templates #}
+{% block system %}
+Bạn là một chuyên gia phân tích thông tin và đọc hiểu văn bản chính xác tuyệt đối.
+Nhiệm vụ: Trả lời câu hỏi trắc nghiệm CHỈ dựa trên thông tin trong phần Văn bản được cung cấp bên dưới.
+
+Văn bản:
+{{ context }}
+
+Quy tắc bắt buộc:
+1. Đọc kỹ văn bản để tìm các từ khóa liên quan đến câu hỏi.
+2. So sánh từng lựa chọn với thông tin tìm được trong văn bản.
+3. Suy luận từng bước:
+- Nếu văn bản chứa câu trả lời trực tiếp: Trích dẫn ý đó để xác nhận.
+- Nếu văn bản KHÔNG chứa câu trả lời trực tiếp: Sử dụng phương pháp loại trừ các đáp án sai hoặc tìm các manh mối gián
+tiếp trong ngữ cảnh để chọn đáp án phù hợp nhất.
+4. Định dạng đầu ra cuối cùng: "Đáp án: X" (trong đó X là ký tự lựa chọn).
+
+
+{% endblock %}
+
+{% block user %}
+Câu hỏi: {{ question }}
+{{ choices }}
+{% endblock %}

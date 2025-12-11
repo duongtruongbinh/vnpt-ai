@@ -1,28 +1,37 @@
 # VNPT AI RAG Pipeline
 
-Agentic RAG Pipeline designed for the VNPT AI Hackathon (Track 2).
+Pipeline designed for the VNPT AI Hackathon (Track 2).
 
 This project implements a modular, model-agnostic workflow using **LangGraph** to intelligently route questions, execute Python code for complex reasoning, and retrieve knowledge from a persistent vector store.
 
-## 🚀 Key Features
+## Key Features
 
-- **Agentic Workflow**: Utilizes a **Router Node** to classify questions into distinct domains (Math, Knowledge, Direct Comprehension, or Toxic) and routes them to specialized solvers. Toxic content is handled immediately in the router by finding refusal options.
+- **Workflow**:
+  - Utilizes a **Router Node** to classify questions into distinct domains: *Math/Logic*, *Knowledge (History/Culture/Law)*, *Reading Comprehension*, or *Toxic*.
+  - Routes each question to the most specialized solver for optimal accuracy.
+
+- **Safety & Policy Compliance**:
+  - **Toxic Content Detection**: Sensitive or policy-violating content is identified immediately at the routing stage.
+  - **Fast-Track Refusal**: Automatically selects the appropriate refusal option without invoking heavy reasoning models, saving cost and time.
+
 - **Program-Aided Language Models (PAL)**:
-  - Solves math and logic problems by generating and executing Python code via a local REPL.
-  - **Self-Correction Loop**: Iteratively executes code, captures output, and corrects errors (up to 5 retry steps).
-- **Multi-Source Ingestion & Crawling**:
-  - Integrated **Firecrawl** to crawl websites (single page, full domain, or topic search).
-  - Supports ingestion of **JSON, PDF, DOCX, and TXT** files into the Vector DB.
-  - **Text Normalization**: Automatic Unicode normalization and whitespace cleaning before ingestion.
-- **Hybrid Model Selection**:
-  - Supports both **Local HuggingFace** models and **VNPT API** models.
-  - Per-model credentials for Large, Small, and Embedding models.
-- **Quota Optimization**:
-  - **Tiered Modeling Architecture**: Lightweight "Small" models for routing, "Large" models for deep reasoning/RAG.
-  - **Smart Caching**: Local disk caching for **Qdrant** to prevent redundant re-embedding.
-- **Responsible AI**: Safety guardrails in the router node to detect and refuse toxic, dangerous, or politically sensitive content by automatically selecting refusal options.
+  - **Code Agent**: Solves math and logic problems by generating and executing Python code via a local REPL, rather than relying solely on LLM hallucination.
+  - **Self-Correction Loop**: The agent iteratively executes code, captures output, and if an error occurs, attempts to correct its own code (up to 5 retry steps).
 
-## 🏗️ Architecture
+- **Robust Checkpointing & Resumability**:
+  - **Real-time Saving**: Every processed question is immediately saved to `inference_log.jsonl`.
+  - **Seamless Resume**: If the pipeline is interrupted (e.g., system crash, power loss), simply re-running the command will skip processed questions and continue exactly where it left off.
+
+- **Smart Rate Limit Handling**:
+  - **Auto-Detection**: Automatically detects API quota limits (HTTP 429/401 errors).
+  - **Graceful Shutdown**: Upon hitting a limit, the pipeline safely stops execution, consolidates all logs, and generates an emergency CSV submission file to ensure no progress is lost.
+
+- **Multi-Source Ingestion**:
+  - **Firecrawl Integration**: Capability to crawl single pages, full domains, or perform topic-based searches.
+  - **Universal Document Support**: Ingests JSON, PDF, DOCX, and TXT files directly into the Qdrant Vector DB.
+  - **Advanced Normalization**: Automatic Unicode normalization and whitespace cleaning for Vietnamese text.
+
+## Architecture
 
 The pipeline is orchestrated by a **LangGraph StateGraph**:
 
@@ -37,7 +46,7 @@ graph TD
     
     subgraph "Knowledge Processing"
         KnowledgeRAG <--> VectorDB[(Qdrant Local Disk)]
-        VectorDB <..- IngestionScript[Ingestion Logic<br/>Persistent Cache]
+        VectorDB <..- IngestionScript[Ingestion Logic]
     end
     
     subgraph "Logic Processing"
@@ -47,35 +56,28 @@ graph TD
     LogicSolver --> End
     KnowledgeRAG --> End
     DirectAnswer --> End
-```
+````
 
-### Components
-
-1.  **Router Node**: A classifier using a small LLM to categorize inputs into: Math, RAG (Lookup), Direct (Reading Comprehension), or Toxic. When toxic content is detected, it automatically finds and returns the refusal option from choices (or defaults to "A" if none found), bypassing other nodes.
-2.  **Logic Solver**: A Code Agent that extracts Python code from LLM responses, executes it locally, and parses the standard output. Includes error handling and retry logic.
-3.  **Knowledge RAG**: Retrieves relevant context from the Qdrant vector store and generates answers using the large LLM.
-4.  **Direct Answer**: Handles reading comprehension questions (based on provided text in the prompt) or general questions where retrieval is unnecessary.
-
-## 🛠️ Tech Stack
+## Tech Stack
 
 | Component | Implementation |
 | :--- | :--- |
 | **Orchestration** | LangGraph, LangChain |
 | **Package Manager** | uv |
 | **Vector DB** | Qdrant (Local Persistence) |
-| **Embedding** | BKAI Vietnamese Bi-encoder / VNPT API |
+| **Embedding** | VNPT API / BKAI Vietnamese Bi-encoder |
 | **Web Crawler** | Firecrawl API |
 | **Doc Parser** | pypdf, python-docx |
 | **Code Execution** | LangChain Experimental PythonREPL |
 | **Models** | Local HuggingFace or VNPT API (configurable via `.env`) |
 
-## ⚡ Quick Start
+## Quick Start
 
 ### Prerequisites
 
-  - Python ≥3.10
+  - Python ≥3.12
   - [uv](https://github.com/astral-sh/uv) (Recommended for fast dependency management)
-  - CUDA-capable GPU (Recommended for local inference)
+  - CUDA-capable GPU (Recommended if running local models)
 
 ### Installation
 
@@ -93,99 +95,102 @@ graph TD
     ```
 
 3.  **Configure Environment**
-    Create a `.env` file:
+    Create a `.env` file in the root directory:
 
     ```env
-    # Model Selection: True for VNPT API, False for local HuggingFace
+    # --- Model Selection ---
     USE_VNPT_API=False
 
-    # Local HuggingFace models (when USE_VNPT_API=False)
+    # --- Local Models (Used if USE_VNPT_API=False) ---
     LLM_MODEL_SMALL=/path/to/your/small/model
     LLM_MODEL_LARGE=/path/to/your/large/model
     EMBEDDING_MODEL=bkai-foundation-models/vietnamese-bi-encoder
 
-    # VNPT API credentials (when USE_VNPT_API=True)
-    VNPT_LARGE_AUTHORIZATION=Bearer your_token_here
-    VNPT_LARGE_TOKEN_ID=your_token_id
-    VNPT_LARGE_TOKEN_KEY=your_token_key
-    VNPT_SMALL_AUTHORIZATION=Bearer your_token_here
-    VNPT_SMALL_TOKEN_ID=your_token_id
-    VNPT_SMALL_TOKEN_KEY=your_token_key
-    VNPT_EMBEDDING_AUTHORIZATION=Bearer your_token_here
-    VNPT_EMBEDDING_TOKEN_ID=your_token_id
-    VNPT_EMBEDDING_TOKEN_KEY=your_token_key
+    # --- VNPT API Config (Used if USE_VNPT_API=True) ---
+    VNPT_LARGE_AUTHORIZATION=Bearer <your_token>
+    VNPT_LARGE_TOKEN_ID=<your_token_id>
+    VNPT_LARGE_TOKEN_KEY=<your_token_key>
 
-    # Optional: Firecrawl for web crawling
-    FIRECRAWL_API_KEY=your_key_here
+    VNPT_SMALL_AUTHORIZATION=Bearer <your_token>
+    VNPT_SMALL_TOKEN_ID=<your_token_id>
+    VNPT_SMALL_TOKEN_KEY=<your_token_key>
+
+    VNPT_EMBEDDING_AUTHORIZATION=Bearer <your_token>
+    VNPT_EMBEDDING_TOKEN_ID=<your_token_id>
+    VNPT_EMBEDDING_TOKEN_KEY=<your_token_key>
     ```
 
 ### Usage
 
-**1. Collect & Ingest Data (Optional)**
+#### 1\. Data Collection & Ingestion (Optional)
+
 Expand your knowledge base by crawling websites or adding local documents.
 
-  * **Crawl Data**: Fetch content from websites using the crawler CLI.
+```bash
+# Crawl a website
+uv run python scripts/crawl.py --url https://example.com --mode links --topic "keyword"
 
-    ```bash
-    # Crawl a website filtering by topic keywords
-    uv run python scripts/crawl.py --url https://example.com --mode links --topic "keyword1,keyword2"
-    ```
+# Ingest data into Vector DB
+uv run python scripts/ingest.py data/crawled/*.json --append
+```
 
-  * **Ingest Data**: Load crawled JSON files or local documents into the Qdrant vector store.
+#### 2\. Run the Pipeline
 
-    ```bash
-    # Ingest crawled data (use --append to keep existing data)
-    uv run python scripts/ingest.py data/crawled/*.json --append
-
-    # Ingest a folder of documents
-    uv run python scripts/ingest.py --dir data/documents --append
-    ```
-
-**2. Run the Pipeline**
-The system automatically handles vector ingestion on the first run.
+**Option A: Local Development (Resumable)**
+Uses `main.py`. Best for testing and processing large datasets over time.
 
 ```bash
 uv run python main.py
 ```
 
-  * **Input Priority:** The system looks for JSON files in `data/` in this order: `val.json`, `test.json`, `private_test.json`, `public_test.json`.
-  * **Input Format:** JSON array with structure: `[{"qid": "...", "question": "...", "choices": ["A", "B", "C", "D"], "answer": "A"}, ...]`
-  * **Output:** Results are saved to `output/submission.csv`.
+**Option B: Docker / Deployment**
+Uses `app.py`. Designed for the competition submission environment.
 
-## 📂 Project Structure
+```bash
+uv run python app.py
+```
+
+### Handling API Limits & Resuming
+
+This pipeline is designed to be **fault-tolerant**:
+
+1.  **Automatic Save**: If the VNPT API returns a Rate Limit error (429/401), the program will:
+
+      * Log the error.
+      * Stop processing new questions immediately.
+      * Consolidate all successful answers into `submission_emergency.csv`.
+      * Exit safely.
+
+2.  **How to Resume**:
+
+      * Wait for your API quota to reset (or switch tokens in `.env`).
+      * Run the same command again (`uv run python main.py`).
+      * The system detects the existing `inference_log.jsonl`, calculates which questions are missing, and **only processes the remaining questions**.
+
+## Project Structure
 
 ```
 vnpt-ai/
 ├── data/                 
-│   ├── qdrant_storage/   # Persistent Vector DB (Git ignored)
-│   ├── crawled/          # Crawled website data (JSON)
-│   ├── val.json          # Validation questions
-│   └── test.json         # Test questions (JSON format)
-├── scripts/
-│   ├── crawl.py          # Web crawler CLI script (Firecrawl)
-│   └── ingest.py         # Data ingestion CLI script (PDF/DOCX/JSON)
+│   ├── qdrant_storage/   # Persistent Vector DB
+│   ├── crawled/          # Crawled raw data
+│   ├── documents/        # PDF/DOCX source files
+│   ├── val.json          # Validation dataset
+│   └── test.json         # Test dataset
+├── output/               # Results and logs (inference_log.jsonl stored here)
 ├── src/
-│   ├── config.py         # Configuration & Environment loading
-│   ├── graph.py          # LangGraph workflow definition
-│   ├── state.py          # GraphState schema & utility functions
-│   ├── nodes/
-│   │   ├── router.py     # Classification & Toxic Handling Logic
-│   │   ├── rag.py        # Retrieval Logic
-│   │   ├── logic.py      # Python Code Agent Logic
-│   │   └── direct.py     # Direct Reading Comprehension Logic
-│   └── utils/
-│       ├── llm.py        # Hybrid Model Loading (Local/API)
-│       ├── ingestion.py  # Qdrant Ingestion, Text Normalization & Caching
-│       ├── logging.py    # Color-coded logging utilities
-│       ├── text_utils.py # Text processing utilities (answer extraction)
-│       └── web_crawler.py # Web crawler utilities
-├── main.py               # Application Entry Point (Async)
-└── pyproject.toml        # Dependencies & Project Metadata
+│   ├── nodes/            # Logic for Router, RAG, Logic, Direct nodes
+│   ├── utils/            # Utilities (Checkpointing, Ingestion, LLM)
+│   ├── pipeline.py       # Core execution logic & Resume handling
+│   └── graph.py          # LangGraph workflow definition
+├── app.py                # Deployment entry point
+├── main.py               # Development entry point
+└── pyproject.toml        # Dependencies
 ```
 
-##  Input/Output Format
+## Input/Output Format
 
-### Input (JSON)
+### Input (JSON - for `main.py`)
 
 ```json
 [
@@ -193,10 +198,14 @@ vnpt-ai/
     "qid": "Q001",
     "question": "Câu hỏi ở đây?",
     "choices": ["Đáp án A", "Đáp án B", "Đáp án C", "Đáp án D"],
-    "answer": "A"  // Optional, for validation
+    "answer": "A"
   }
 ]
 ```
+
+### Input (CSV - for `app.py`)
+Columns: `qid`, `question`, `choice_a`, `choice_b`, `choice_c`, `choice_d` (or a `choices` column).
+
 
 ### Output (CSV)
 

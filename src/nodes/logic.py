@@ -5,46 +5,13 @@ import re
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 from langchain_experimental.utilities import PythonREPL
 
+from src.data_processing.answer import extract_answer
 from src.state import GraphState, format_choices, get_choices_from_state
-from src.utils.text_utils import extract_answer
 from src.utils.llm import get_large_model
 from src.utils.logging import print_log
+from src.utils.prompts import load_prompt
 
 _python_repl = PythonREPL()
-
-
-CODE_AGENT_PROMPT = """Bạn là chuyên gia lập trình Python giải quyết các bài toán trắc nghiệm.
-
-QUY TẮC VÀNG:
-1. Import đầy đủ: `import math`, `import sympy as sp`, `import numpy as np`.
-2. Xử lý sai số: Khi so sánh kết quả tính toán (float) với các lựa chọn, KHÔNG dùng `==`. Hãy dùng `math.isclose(a, b, rel_tol=1e-5)` hoặc `abs(a - b) < 1e-5`.
-3. Định dạng Output: Bắt buộc in kết quả cuối cùng theo cú pháp: `print(f"Đáp án: {key}")` (Ví dụ: "Đáp án: A").
-
-CẤU TRÚC CODE MẪU:
-```python
-import math
-
-# 1. Tính toán
-result = 10 / 3
-
-# 2. Định nghĩa options
-options = {"A": 3.33, "B": 3.0, "C": 4.0, "D": 5.0}
-
-# 3. So sánh thông minh
-found = False
-for key, val in options.items():
-    if math.isclose(result, val, rel_tol=1e-4):
-        print(f"Đáp án: {key}")
-        found = True
-        break
-
-# 4. Fallback nếu không khớp chính xác
-if not found:
-    # Tìm giá trị gần nhất
-    closest_key = min(options, key=lambda k: abs(options[k] - result))
-    print(f"Đáp án: {closest_key}")
-        
-Chỉ trả về block code Python, không giải thích thêm."""
 
 
 def extract_python_code(text: str) -> str | None:
@@ -55,10 +22,8 @@ def extract_python_code(text: str) -> str | None:
     return None
 
 
-
-
 def _indent_code(code: str) -> str:
-    """Format code to make it easier to read in the terminal"""
+    """Format code to make it easier to read in the terminal."""
     return "\n".join(f"        {line}" for line in code.splitlines())
 
 
@@ -68,14 +33,15 @@ def logic_solver_node(state: GraphState) -> dict:
     all_choices = get_choices_from_state(state)
     choices_text = format_choices(all_choices)
 
-    question_content = f"Câu hỏi: {state['question']}\n{choices_text}"
+    system_prompt = load_prompt("logic_solver.j2", "system")
+    user_prompt = load_prompt("logic_solver.j2", "user", question=state["question"], choices=choices_text)
 
     messages: list[BaseMessage] = [
-        SystemMessage(content=CODE_AGENT_PROMPT),
-        HumanMessage(content=question_content)
+        SystemMessage(content=system_prompt),
+        HumanMessage(content=user_prompt)
     ]
 
-    raw_responses: list[str] = []  # Collect all LLM responses for debugging
+    raw_responses: list[str] = []
 
     max_steps = 5
     for step in range(max_steps):
@@ -111,9 +77,8 @@ def logic_solver_node(state: GraphState) -> dict:
                     combined_raw = "\n---STEP---\n".join(raw_responses)
                     return {"answer": code_ans, "raw_response": combined_raw}
 
-                feedback_msg = f"Kết quả chạy code: {output}.\n"
-                feedback_msg += "Lưu ý: Bạn vẫn chưa đưa ra đáp án cuối cùng, duyệt lại code và các đáp án để chỉnh sửa phù hợp."
-
+                feedback_msg = f"Code output: {output}.\n"
+                feedback_msg += "Lưu ý: Bạn vẫn chưa trả lời đáp án cuối cùng, duyệt lại code và các đáp án để chỉnh sửa phù hợp."
                 messages.append(HumanMessage(content=feedback_msg))
 
             except Exception as e:

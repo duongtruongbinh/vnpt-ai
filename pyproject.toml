@@ -2,7 +2,7 @@
 name = "vnpt-ai-rag"
 version = "0.1.0"
 description = "RAG pipeline for Vietnamese multiple-choice questions"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
     "langgraph>=0.2.0",
     "langchain>=0.3.0",
@@ -26,6 +26,8 @@ dependencies = [
     "firecrawl-py>=1.0.0",
     "tqdm>=4.66.0",
     "pypdf>=6.4.0",
+    "httpx>=0.28.1",
+    "jinja2>=3.1.0",
 ]
 
 [build-system]

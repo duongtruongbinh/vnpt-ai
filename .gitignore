@@ -19,7 +19,7 @@ dist/
 wheels/
 
 # Environment variables
-.env
+*.env
 .env.local
 .env.*.local
 
@@ -36,7 +36,7 @@ qdrant_storage/
 # Output files (keep data folder structure)
 data/pred.csv
 data/__pycache__/
-data/crawled/
+# data/crawled/
 *.csv.bak
 
 # Logs
@@ -69,6 +69,5 @@ dmypy.json
 
 repomix-output.xml
 
-
-test_data/
+output/
 test_output/

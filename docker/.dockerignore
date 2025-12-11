@@ -29,7 +29,6 @@ wheels/
 *.swo
 *~
 
-data/
 *.json
 *.csv
 *.pdf
@@ -53,5 +52,3 @@ docker-compose.yml
 # Documentation
 README.md
 *.md
-
-qdrant_storage/

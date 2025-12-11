@@ -37,9 +37,7 @@ def build_graph() -> StateGraph:
     workflow.add_edge("direct_answer", END)
     return workflow.compile()
 
-
 graph = None
-
 
 def get_graph():
     """Get or create the compiled graph singleton."""
@@ -47,4 +45,3 @@ def get_graph():
     if graph is None:
         graph = build_graph()
     return graph
-

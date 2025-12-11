@@ -3,12 +3,14 @@
 from typing import Any
 
 import httpx
+import torch
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 from langchain_huggingface import ChatHuggingFace, HuggingFacePipeline
 
 from src.config import settings
+from src.utils.logging import log_pipeline
 
 _model_cache: dict[str, BaseChatModel] = {}
 
@@ -18,7 +20,7 @@ class VNPTChatModel(BaseChatModel):
 
     endpoint: str
     model_name: str
-    authorization: str  
+    authorization: str
     token_id: str
     token_key: str
     timeout: float = 60.0
@@ -34,6 +36,7 @@ class VNPTChatModel(BaseChatModel):
         return {"model_name": self.model_name, "endpoint": self.endpoint}
 
     def _get_headers(self) -> dict[str, str]:
+        """Build request headers for VNPT API."""
         return {
             "Authorization": self.authorization,
             "Token-id": self.token_id,
@@ -55,14 +58,22 @@ class VNPTChatModel(BaseChatModel):
                 converted.append({"role": "user", "content": str(msg.content)})
         return converted
 
-    def _generate(
+    def _create_payload(
         self,
         messages: list[BaseMessage],
         stop: list[str] | None = None,
-        run_manager: Any = None,
         **kwargs: Any,
-    ) -> ChatResult:
-        """Generate response from VNPT API."""
+    ) -> dict[str, Any]:
+        """Build request payload for VNPT API.
+
+        Args:
+            messages: List of LangChain messages
+            stop: Optional stop sequences
+            **kwargs: Additional parameters (max_tokens, temperature)
+
+        Returns:
+            API request payload dict
+        """
         payload = {
             "model": self.model_name,
             "messages": self._convert_messages(messages),
@@ -71,6 +82,73 @@ class VNPTChatModel(BaseChatModel):
         }
         if stop:
             payload["stop"] = stop
+        return payload
+
+    def _handle_api_response(self, data: dict) -> tuple[str, str | None, dict]:
+        """Process API response data and handle safety refusals gracefully.
+
+        Args:
+            data: Raw API response dict
+
+        Returns:
+            Tuple of (content, finish_reason, usage_dict)
+
+        Raises:
+            RuntimeError: On API error (except safety filter)
+        """
+        # Handle Errors & Safety Refusals
+        if "error" in data:
+            error_msg = data.get("error", {})
+            error_text = error_msg.get("message", str(error_msg)) if isinstance(error_msg, dict) else str(error_msg)
+
+            # Catch VNPT Content Safety Filter - return "toxic" for Router to handle
+            if "thuần phong mỹ tục" in error_text or "không thể trả lời" in error_text:
+                return "toxic", "stop", {}
+
+            raise RuntimeError(f"VNPT API returned error: {error_text}")
+
+        # Extract Content from various response formats
+        if "choices" in data and len(data["choices"]) > 0:
+            choice = data["choices"][0]
+            content = choice.get("message", {}).get("content") or choice.get("text") or choice.get("content")
+            if content is None:
+                raise RuntimeError(f"Unexpected format in choices[0]: {list(choice.keys())}")
+            finish_reason = choice.get("finish_reason")
+
+        elif "data" in data and isinstance(data["data"], list) and len(data["data"]) > 0:
+            item = data["data"][0]
+            content = item.get("content") or item.get("text", "")
+            finish_reason = item.get("finish_reason")
+
+        elif "content" in data:
+            content = data["content"]
+            finish_reason = data.get("finish_reason")
+
+        else:
+            raise RuntimeError(f"Unexpected VNPT API response keys: {list(data.keys())}")
+
+        return content, finish_reason, data.get("usage", {})
+
+    def _build_chat_result(self, content: str, finish_reason: str | None, usage: dict) -> ChatResult:
+        """Build ChatResult from parsed response data."""
+        generation = ChatGeneration(
+            message=AIMessage(content=content),
+            generation_info={"finish_reason": finish_reason, "usage": usage},
+        )
+        return ChatResult(
+            generations=[generation],
+            llm_output={"model_name": self.model_name, "usage": usage},
+        )
+
+    def _generate(
+        self,
+        messages: list[BaseMessage],
+        stop: list[str] | None = None,
+        run_manager: Any = None,
+        **kwargs: Any,
+    ) -> ChatResult:
+        """Generate response from VNPT API (sync)."""
+        payload = self._create_payload(messages, stop, **kwargs)
 
         try:
             with httpx.Client(timeout=self.timeout) as client:
@@ -79,32 +157,23 @@ class VNPTChatModel(BaseChatModel):
                     headers=self._get_headers(),
                     json=payload,
                 )
-                response.raise_for_status()
-                data = response.json()
+                if response.status_code >= 400:
+                    try:
+                        data = response.json()
+                    except Exception:
+                        response.raise_for_status()
+                else:
+                    data = response.json()
 
-            content = data["choices"][0]["message"]["content"]
-            usage = data.get("usage", {})
+            content, finish_reason, usage = self._handle_api_response(data)
+            return self._build_chat_result(content, finish_reason, usage)
 
-            generation = ChatGeneration(
-                message=AIMessage(content=content),
-                generation_info={
-                    "finish_reason": data["choices"][0].get("finish_reason"),
-                    "usage": usage,
-                },
-            )
-            return ChatResult(
-                generations=[generation],
-                llm_output={"model_name": self.model_name, "usage": usage},
-            )
-
-        except httpx.HTTPStatusError as e:
-            raise RuntimeError(
-                f"VNPT API error ({e.response.status_code}): {e.response.text}"
-            ) from e
         except httpx.RequestError as e:
             raise RuntimeError(f"VNPT API request failed: {e}") from e
-        except (KeyError, IndexError) as e:
-            raise RuntimeError(f"Unexpected VNPT API response format: {e}") from e
+        except Exception as e:
+            if isinstance(e, RuntimeError):
+                raise
+            raise RuntimeError(f"VNPT API processing failed: {e}") from e
 
     async def _agenerate(
         self,
@@ -114,14 +183,7 @@ class VNPTChatModel(BaseChatModel):
         **kwargs: Any,
     ) -> ChatResult:
         """Async generate response from VNPT API."""
-        payload = {
-            "model": self.model_name,
-            "messages": self._convert_messages(messages),
-            "max_tokens": kwargs.get("max_tokens", self.max_tokens),
-            "temperature": kwargs.get("temperature", self.temperature),
-        }
-        if stop:
-            payload["stop"] = stop
+        payload = self._create_payload(messages, stop, **kwargs)
 
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
@@ -130,32 +192,23 @@ class VNPTChatModel(BaseChatModel):
                     headers=self._get_headers(),
                     json=payload,
                 )
-                response.raise_for_status()
-                data = response.json()
+                if response.status_code >= 400:
+                    try:
+                        data = response.json()
+                    except Exception:
+                        response.raise_for_status()
+                else:
+                    data = response.json()
 
-            content = data["choices"][0]["message"]["content"]
-            usage = data.get("usage", {})
+            content, finish_reason, usage = self._handle_api_response(data)
+            return self._build_chat_result(content, finish_reason, usage)
 
-            generation = ChatGeneration(
-                message=AIMessage(content=content),
-                generation_info={
-                    "finish_reason": data["choices"][0].get("finish_reason"),
-                    "usage": usage,
-                },
-            )
-            return ChatResult(
-                generations=[generation],
-                llm_output={"model_name": self.model_name, "usage": usage},
-            )
-
-        except httpx.HTTPStatusError as e:
-            raise RuntimeError(
-                f"VNPT API error ({e.response.status_code}): {e.response.text}"
-            ) from e
         except httpx.RequestError as e:
             raise RuntimeError(f"VNPT API request failed: {e}") from e
-        except (KeyError, IndexError) as e:
-            raise RuntimeError(f"Unexpected VNPT API response format: {e}") from e
+        except Exception as e:
+            if isinstance(e, RuntimeError):
+                raise
+            raise RuntimeError(f"VNPT API processing failed: {e}") from e
 
 
 def _load_huggingface_model(model_path: str, model_type: str) -> ChatHuggingFace:
@@ -174,24 +227,18 @@ def _load_huggingface_model(model_path: str, model_type: str) -> ChatHuggingFace
         model_kwargs={
             "trust_remote_code": True,
             "device_map": "auto",
+            "torch_dtype": torch.float32,
         },
     )
 
     llm = ChatHuggingFace(llm=llm_pipeline)
     _model_cache[model_path] = llm
-    print(f"[Model] {model_type} loaded from {model_path}")
+    log_pipeline(f"[Model] {model_type} loaded from {model_path}")
     return llm
 
 
 def _get_vnpt_model(model_type: str) -> VNPTChatModel:
-    """Get VNPT API model wrapper with per-model credentials.
-
-    Args:
-        model_type: "small" or "large"
-
-    Returns:
-        VNPTChatModel instance configured for the specified model type
-    """
+    """Get VNPT API model wrapper with per-model credentials."""
     cache_key = f"vnpt_{model_type}"
     if cache_key in _model_cache:
         return _model_cache[cache_key]
@@ -223,7 +270,7 @@ def _get_vnpt_model(model_type: str) -> VNPTChatModel:
     )
 
     _model_cache[cache_key] = model
-    print(f"[Model] VNPT {model_type} initialized: {endpoint}")
+    log_pipeline(f"[Model] VNPT {model_type} initialized: {endpoint}")
     return model
 
 

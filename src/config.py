@@ -10,7 +10,7 @@ load_dotenv()
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 DATA_DIR = Path(os.getenv("DATA_DIR", PROJECT_ROOT / "data"))
-DATA_INPUT_DIR = Path(os.getenv("DATA_INPUT_DIR", DATA_DIR))
+DATA_INPUT_DIR = Path(os.getenv("DATA_INPUT_DIR", PROJECT_ROOT / "test_data"))
 DATA_OUTPUT_DIR = Path(os.getenv("DATA_OUTPUT_DIR", PROJECT_ROOT / "output"))
 DATA_CRAWLED_DIR = Path(os.getenv("DATA_CRAWLED_DIR", DATA_DIR / "crawled"))
 BATCH_SIZE = 1

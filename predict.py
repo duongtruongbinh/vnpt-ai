@@ -39,7 +39,7 @@ async def async_main(batch_size: int = BATCH_SIZE) -> None:
     questions = load_test_data_from_csv(input_file)
     log_main(f"Loaded {len(questions)} questions (batch_size={batch_size})")
 
-    predictions = await run_pipeline_async(questions, batch_size=batch_size)
+    predictions = await run_pipeline_async(questions, batch_size=batch_size, force_reingest=True)
 
     output_file = DATA_OUTPUT_DIR / "pred.csv"
     save_predictions(predictions, output_file, ensure_dir=True)

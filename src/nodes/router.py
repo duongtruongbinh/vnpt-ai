@@ -8,33 +8,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from src.state import GraphState, format_choices, get_choices_from_state
 from src.utils.llm import get_small_model
 from src.utils.logging import print_log
-
-ROUTER_SYSTEM_PROMPT = """Nhiệm vụ: Phân loại câu hỏi vào 1 trong 4 nhóm chính xác tuyệt đối.
-
-QUAN TRỌNG: Bạn phải kiểm tra kỹ nội dung của CÂU HỎI và tất cả các LỰA CHỌN.
-
-1. "toxic":
-   - Câu hỏi yêu cầu hướng dẫn làm việc phi pháp (trốn thuế, làm giả giấy tờ, chế tạo vũ khí, tấn công mạng...).
-   - Câu hỏi về nội dung đồi trụy, phản động, kích động bạo lực.
-
-2. "direct": 
-   - Câu hỏi chứa đoạn văn bản, đoạn thông tin dài.
-   - Yêu cầu đọc hiểu từ đoạn văn đó.
-
-3. "math":
-   - Bài tập Toán, Lý, Hóa, Sinh cần tính toán.
-   - Các câu hỏi cần lập luận, logic, tìm quy luật.
-   
-4. "rag": 
-   - Kiến thức Lịch sử, Địa lý, Văn hóa, Xã hội, Văn học, Luật pháp, Y học (lý thuyết).
-   - Những câu hỏi cần tra cứu kiến thức mà không cần tính toán phức tạp.
-
-Chỉ trả về đúng 1 từ: toxic, math, direct, hoặc rag."""
-
-ROUTER_USER_PROMPT = """Câu hỏi: {question}
-{choices}
-
-Nhóm:"""
+from src.utils.prompts import load_prompt
 
 
 def _find_refusal_option(state: GraphState) -> str | None:
@@ -45,8 +19,7 @@ def _find_refusal_option(state: GraphState) -> str | None:
     refusal_patterns = [
         "tôi không thể", "không thể trả lời", "không thể cung cấp", "không thể chia sẻ",
         "từ chối trả lời", "từ chối cung cấp",
-        "nằm ngoài phạm vi", "không thuộc phạm vi",
-        "tôi là ai", "tôi là mô hình ngôn ngữ", 
+        "nằm ngoài phạm vi", "không thuộc phạm vi", "tôi là mô hình ngôn ngữ", 
         "hành vi vi phạm", "trái pháp luật", "không hỗ trợ",
     ]
     
@@ -62,15 +35,16 @@ def _classify_with_llm(state: GraphState) -> str:
     """Classify question using LLM."""
     choices_text = format_choices(get_choices_from_state(state))
     llm = get_small_model()
+    
+    system_prompt = load_prompt("router.j2", "system")
+    user_prompt = load_prompt("router.j2", "user", question=state["question"], choices=choices_text)
+    
     prompt = ChatPromptTemplate.from_messages([
-        ("system", ROUTER_SYSTEM_PROMPT),
-        ("human", ROUTER_USER_PROMPT),
+        ("system", system_prompt),
+        ("human", user_prompt),
     ])
     chain = prompt | llm
-    response = chain.invoke({
-        "question": state["question"],
-        "choices": choices_text,
-    })
+    response = chain.invoke({})
     return response.content.strip().lower()
 
 
@@ -86,16 +60,14 @@ def router_node(state: GraphState) -> dict:
     
     # Fast-track: Math/Logic for LaTeX or math keywords
     math_signals = [
-        "$", "\\frac", "^",
-        "tính giá trị", "biểu thức", "phương trình", "hàm số", "đạo hàm",
-        "xác suất", "lãi suất", "vận tốc", "gia tốc", "điện trở",
-        "bao nhiêu gam", "mol", "nguyên tử khối",
+        "$", "\\frac", "^", "=", "tính giá trị", "biểu thức", "phương trình", 
+        "hàm số", "đạo hàm", "xác suất", "lãi suất", "vận tốc", "gia tốc", 
+        "điện trở", "gam", "mol", "nguyên tử khối", "gdp", "lạm phát", "công suất"
     ]
     if any(s in question for s in math_signals):
         print_log("        [Router] Fast-track: Math (Keywords/LaTeX detected)")
         return {"route": "math"}
     
-    # Slow-track: Use LLM for classification
     print_log("        [Router] Slow-track: Using LLM to classify...")
     try:
         route = _classify_with_llm(state)
@@ -105,8 +77,7 @@ def router_node(state: GraphState) -> dict:
             route_type = "direct"
         elif "math" in route or "logic" in route:
             route_type = "math"
-        elif "toxic" in route or "danger" in route or "harmful" in route:
-            # Check for refusal option and return answer immediately
+        elif "toxic" in route:
             refusal_answer = _find_refusal_option(state)
             if refusal_answer:
                 print_log(f"        [Router] Toxic detected, found refusal option: {refusal_answer}")
@@ -127,11 +98,8 @@ def route_question(state: GraphState) -> Literal["knowledge_rag", "logic_solver"
     route = state.get("route", "rag")
     answer = state.get("answer")
     
-    # Toxic questions are always resolved in router_node, go directly to END
     if route == "toxic":
-        print_log(f"        [Router] Toxic resolved with answer: {answer}")
-        return "__end__"
-    
+        return "__end__"    
     if route == "direct":
         return "direct_answer"
     if route == "math":

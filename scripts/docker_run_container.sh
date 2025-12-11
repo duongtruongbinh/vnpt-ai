@@ -14,17 +14,9 @@ USE_VNPT_API=False
 
 mkdir -p "$TEST_DATA_DIR" "$OUTPUT_DIR"
 
-# Only add GPU flag if nvidia-smi is available (indicates GPU support)
-GPU_FLAG=""
-if command -v nvidia-smi &> /dev/null && nvidia-smi &> /dev/null; then
-    GPU_FLAG="--gpus all"
-fi
-
-docker run --rm \
-    $GPU_FLAG \
+docker run \
     -v "$TEST_DATA_DIR:/data:ro" \
     -v "$OUTPUT_DIR:/output" \
-    -v "$PROJECT_ROOT/.cache:/root/.cache" \
     -e USE_VNPT_API="$USE_VNPT_API" \
     -e LLM_MODEL_SMALL="$LLM_MODEL_SMALL" \
     -e LLM_MODEL_LARGE="$LLM_MODEL_LARGE" \
