@@ -27,6 +27,41 @@ def _indent_code(code: str) -> str:
     return "\n".join(f"        {line}" for line in code.splitlines())
 
 
+def _fallback_text_reasoning(llm, question: str, choices_text: str, max_choices: int) -> dict:
+    """Fallback to CoT reasoning when code execution fails."""
+    print_log("        [Logic] Falling back to CoT reasoning...")
+
+    fallback_system = (
+        "Nhiệm vụ của bạn là trả lời câu hỏi "
+        "được đưa ra bằng khả năng phân tích và suy luận logic. "
+        "Hãy phân tích vấn đề và suy luận đề từng bước một. " 
+        "Cuối cùng, hãy trả lời theo đúng định dạng: 'Đáp án: X' "
+        "trong đó X là ký tự đại diện cho lựa chọn đúng (A, B, C, D, ...)."
+    )
+
+    fallback_user = (
+        f"Câu hỏi: {question}\n"
+        f"{choices_text}"
+    )
+
+    fallback_messages: list[BaseMessage] = [
+        SystemMessage(content=fallback_system),
+        HumanMessage(content=fallback_user)
+    ]
+
+    fallback_response = llm.invoke(fallback_messages)
+    fallback_content = fallback_response.content
+    print_log(f"        [Logic] Fallback response received.")
+
+    fallback_answer = extract_answer(fallback_content, max_choices=max_choices)
+    if fallback_answer:
+        print_log(f"        [Logic] Fallback Answer: {fallback_answer}")
+        return {"answer": fallback_answer, "raw_response": fallback_content}
+
+    print_log("        [Warning] Fallback reasoning failed to extract answer. Defaulting to A.")
+    return {"answer": "A", "raw_response": fallback_content}
+
+
 def logic_solver_node(state: GraphState) -> dict:
     """Solve math/logic questions using Python code execution."""
     llm = get_large_model()
@@ -92,6 +127,12 @@ def logic_solver_node(state: GraphState) -> dict:
             print_log("        [Warning] No code or answer found. Reminding model...")
             messages.append(HumanMessage(content="Lưu ý: Bạn vẫn chưa đưa ra đáp án cuối cùng, duyệt lại code và các đáp án để chỉnh sửa phù hợp."))
 
-    print_log("        [Warning] Max steps reached. Defaulting to A.")
+    print_log("        [Warning] Max steps reached. Code execution approach failed.")
+    max_choices = len(all_choices) or 4
+    fallback_result = _fallback_text_reasoning(llm, state["question"], choices_text, max_choices)
+
     combined_raw = "\n---STEP---\n".join(raw_responses) if raw_responses else ""
-    return {"answer": "A", "raw_response": combined_raw}
+    combined_raw += "\n---FALLBACK---\n" + fallback_result["raw_response"]
+    fallback_result["raw_response"] = combined_raw
+
+    return fallback_result
