@@ -6,7 +6,7 @@ This project implements a modular, model-agnostic workflow using **LangGraph** t
 
 ## Key Features
 
-- **Workflow**:
+- **Intelligent Workflow**:
   - Utilizes a **Router Node** to classify questions into distinct domains: *Math/Logic*, *Knowledge (History/Culture/Law)*, *Reading Comprehension*, or *Toxic*.
   - Routes each question to the most specialized solver for optimal accuracy.
 
@@ -17,6 +17,19 @@ This project implements a modular, model-agnostic workflow using **LangGraph** t
 - **Program-Aided Language Models (PAL)**:
   - **Code Agent**: Solves math and logic problems by generating and executing Python code via a local REPL, rather than relying solely on LLM hallucination.
   - **Self-Correction Loop**: The agent iteratively executes code, captures output, and if an error occurs, attempts to correct its own code (up to 5 retry steps).
+  - **Syntax Validation**: Validates Python syntax before execution to catch errors early.
+  - **Placeholder Detection**: Detects incomplete/placeholder code and requests complete solutions.
+  - **Fallback Reasoning**: Falls back to text-based reasoning when code execution fails.
+
+- **Advanced RAG with Reranking**:
+  - **Two-Stage Retrieval**: Retrieves top-k documents (default: 10), then reranks to select most relevant (default: 3).
+  - **LLM-Based Reranking**: Uses small model to choose document relevance for better precision.
+  - **Keyword Boost Fallback**: Falls back to keyword matching if LLM reranking fails.
+  - **Title-Aware Embedding**: Prepends document titles to chunks for improved semantic matching.
+
+- **Answer Extraction**:
+  - **Explicit Pattern Matching**: Only extracts answers from explicit lines (e.g., "Đáp án: A", "Answer: B").
+  - **Safe Fallback**: Returns controlled defaults instead of guessing from ambiguous responses.
 
 - **Robust Checkpointing & Resumability**:
   - **Real-time Saving**: Every processed question is immediately saved to `inference_log.jsonl`.
@@ -30,6 +43,7 @@ This project implements a modular, model-agnostic workflow using **LangGraph** t
   - **Firecrawl Integration**: Capability to crawl single pages, full domains, or perform topic-based searches.
   - **Universal Document Support**: Ingests JSON, PDF, DOCX, and TXT files directly into the Qdrant Vector DB.
   - **Advanced Normalization**: Automatic Unicode normalization and whitespace cleaning for Vietnamese text.
+  - **Context-Rich Chunks**: Document titles are prepended to chunks for better embedding context.
 
 ## Architecture
 
@@ -40,23 +54,31 @@ graph TD
     Start([Input Question]) --> RouterNode{Router Node<br/>Small Model}
     
     RouterNode -- "Math/Logic" --> LogicSolver[Logic Solver - Code Agent<br/>Large Model]
-    RouterNode -- "History/Culture/Law" --> KnowledgeRAG[Knowledge RAG - Retrieval<br/>Large Model]
+    RouterNode -- "History/Culture/Law" --> KnowledgeRAG[Knowledge RAG<br/>Large Model]
     RouterNode -- "Reading/General" --> DirectAnswer[Direct Answer - Zero-shot<br/>Large Model]
     RouterNode -- "Toxic/Sensitive" --> End([Final Answer<br/>Refusal Option])
     
     subgraph "Knowledge Processing"
-        KnowledgeRAG <--> VectorDB[(Qdrant Local Disk)]
-        VectorDB <..- IngestionScript[Ingestion Logic]
+        KnowledgeRAG --> Retrieve[Retrieve Top-K]
+        Retrieve --> Rerank[LLM Reranking<br/>Small Model]
+        Rerank --> Generate[Generate Answer]
+        Retrieve <--> VectorDB[(Qdrant Local Disk)]
+        VectorDB <..- IngestionScript[Ingestion Logic<br/>Title-Aware Chunks]
     end
     
     subgraph "Logic Processing"
-        LogicSolver <--> PythonREPL[Python Interpreter<br/>Iterative Execution]
+        LogicSolver --> CodeExec[Python REPL<br/>Syntax Validation]
+        CodeExec --> SelfCorrect{Success?}
+        SelfCorrect -- "Error" --> CodeExec
+        SelfCorrect -- "Yes" --> ExtractAns[Extract Answer]
+        SelfCorrect -- "Max Retries" --> Fallback[Text Reasoning<br/>Fallback]
     end
     
-    LogicSolver --> End
-    KnowledgeRAG --> End
+    ExtractAns --> End
+    Fallback --> End
+    Generate --> End
     DirectAnswer --> End
-````
+```
 
 ## Tech Stack
 
@@ -66,6 +88,7 @@ graph TD
 | **Package Manager** | uv |
 | **Vector DB** | Qdrant (Local Persistence) |
 | **Embedding** | VNPT API / BKAI Vietnamese Bi-encoder |
+| **Reranking** | LLM-based (Small Model) with keyword fallback |
 | **Web Crawler** | Firecrawl API |
 | **Doc Parser** | pypdf, python-docx |
 | **Code Execution** | LangChain Experimental PythonREPL |
@@ -131,7 +154,8 @@ Expand your knowledge base by crawling websites or adding local documents.
 uv run python scripts/crawl.py --url https://example.com --mode links --topic "keyword"
 
 # Ingest data into Vector DB
-uv run python scripts/ingest.py data/crawled/*.json --append
+uv run python scripts/ingest.py data/crawled/*.json --append # for files
+uv run python scripts/ingest.py --dir data/crawled # for directory
 ```
 
 #### 2\. Run the Pipeline
@@ -173,10 +197,12 @@ This pipeline is designed to be **fault-tolerant**:
 vnpt-ai/
 ├── data/                 
 │   ├── qdrant_storage/   # Persistent Vector DB
-│   ├── crawl/          # Crawled raw data
+│   └── crawl/            # Crawled raw data
 ├── src/
 │   ├── nodes/            # Logic for Router, RAG, Logic, Direct nodes
-│   ├── utils/            # Utilities (Checkpointing, Ingestion, LLM)
+│   ├── data_processing/  # Answer extraction, formatting, models
+│   ├── templates/        # Jinja2 prompt templates (rag.j2, logic_solver.j2, etc.)
+│   ├── utils/            # Utilities (Checkpointing, Ingestion, LLM, Embeddings)
 │   ├── pipeline.py       # Core execution logic & Resume handling
 │   └── graph.py          # LangGraph workflow definition
 ├── app.py                # Deployment entry point

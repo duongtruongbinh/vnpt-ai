@@ -66,6 +66,21 @@ def _is_junk_text(text: str) -> bool:
     return False
 
 
+def _prepend_title_to_chunk(chunk_text: str, title: str) -> str:
+    """Prepend title to chunk content for better context in embeddings.
+    
+    Args:
+        chunk_text: The original chunk content
+        title: The document title to prepend
+    
+    Returns:
+        Formatted string with title prepended
+    """
+    if title and title.strip():
+        return f"Title: {title.strip()}\nContent: {chunk_text}"
+    return chunk_text
+
+
 def _initialize_collection(
     client: QdrantClient,
     collection_name: str,
@@ -109,6 +124,9 @@ def _process_crawled_json(json_path: Path) -> tuple[list[str], list[dict]]:
         if not content:
             continue
 
+        # Extract title for context prepending
+        title = normalize_text(doc.get("title", ""))
+
         keywords_raw = doc.get("keywords")
         keywords_str = ""
         if isinstance(keywords_raw, list):
@@ -118,7 +136,7 @@ def _process_crawled_json(json_path: Path) -> tuple[list[str], list[dict]]:
 
         base_metadata = {
             "source_url": doc.get("url", ""),
-            "title": normalize_text(doc.get("title", "")),
+            "title": title,
             "summary": normalize_text(doc.get("summary", "")),
             "topic": data.get("topic", ""),
             "keywords": keywords_str,
@@ -136,7 +154,11 @@ def _process_crawled_json(json_path: Path) -> tuple[list[str], list[dict]]:
             chunk_metadata = base_metadata.copy()
             chunk_metadata["chunk_index"] = i
             chunk_metadata["total_chunks"] = total_raw_chunks
-            all_chunks.append(chunk)
+            
+            # Prepend title to chunk content for better embedding context
+            chunk_with_title = _prepend_title_to_chunk(chunk, title)
+            
+            all_chunks.append(chunk_with_title)
             all_metadatas.append(chunk_metadata)
 
     return all_chunks, all_metadatas
@@ -226,15 +248,24 @@ def _extract_chunks_from_file(
     if not text or not metadata:
         return [], []
 
+    # Extract title from metadata for context prepending
+    title = metadata.get("title", "")
+
     chunks = splitter.split_text(text)
+    processed_chunks = []
     metadatas = []
-    for i, _ in enumerate(chunks):
+    
+    for i, chunk in enumerate(chunks):
+        # Prepend title to each chunk for better embedding context
+        chunk_with_title = _prepend_title_to_chunk(chunk, title)
+        processed_chunks.append(chunk_with_title)
+        
         chunk_meta = metadata.copy()
         chunk_meta["chunk_index"] = i
         chunk_meta["total_chunks"] = len(chunks)
         metadatas.append(chunk_meta)
 
-    return chunks, metadatas
+    return processed_chunks, metadatas
 
 
 def ingest_all_data(

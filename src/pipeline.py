@@ -146,7 +146,7 @@ async def run_pipeline_with_checkpointing(
                 option_labels = string.ascii_uppercase
                 valid_answers = option_labels[:num_choices]
 
-                if answer not in valid_answers:
+                if answer is None or answer not in valid_answers:
                     print_log(f"        [Warning] Invalid answer '{answer}' for {q.qid}, defaulting to A")
                     answer = "A"
 
@@ -163,7 +163,7 @@ async def run_pipeline_with_checkpointing(
 
                 log_done(f"{q.qid}: {answer} (Route: {route})")
                 processed_count += 1
-                # await asyncio.sleep(105)
+                await asyncio.sleep(150)
 
             except Exception as e:
                 if is_rate_limit_error(e):

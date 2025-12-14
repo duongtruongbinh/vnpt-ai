@@ -108,8 +108,9 @@ class Settings(BaseSettings):
     )
 
     chunk_size: int = 1000
-    chunk_overlap: int = 100
-    top_k_retrieval: int = 5
+    chunk_overlap: int = 200
+    top_k_retrieval: int = 10
+    top_k_rerank: int = 3
 
     @property
     def vector_db_path_resolved(self) -> Path:
