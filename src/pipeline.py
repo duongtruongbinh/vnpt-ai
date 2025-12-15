@@ -19,7 +19,7 @@ from src.utils.checkpointing import (
     is_rate_limit_error,
 )
 from src.utils.common import sort_qids
-from src.utils.ingestion import ingest_all_data
+from src.utils.ingestion import get_vector_store
 from src.utils.logging import log_done, log_pipeline, log_stats, print_log
 
 
@@ -32,21 +32,19 @@ def sort_questions_by_qid(questions: list[QuestionInput]) -> list[QuestionInput]
 
 async def run_pipeline_async(
     questions: list[QuestionInput],
-    force_reingest: bool = False,
     batch_size: int = BATCH_SIZE,
 ) -> list[PredictionOutput]:
-    """Run pipeline without checkpointing (for app.py deployment).
+    """Run pipeline for inference (assumes pre-built Vector DB).
 
     Args:
         questions: List of questions to process
-        force_reingest: If True, force re-ingestion of knowledge base
         batch_size: Number of concurrent questions to process
 
     Returns:
         List of PredictionOutput objects sorted by qid
     """
-    log_pipeline("Initializing knowledge base...")
-    ingest_all_data(force=force_reingest)
+    log_pipeline("Loading pre-built vector store...")
+    get_vector_store()
 
     questions = sort_questions_by_qid(questions)
 
@@ -92,7 +90,6 @@ async def run_pipeline_async(
 async def run_pipeline_with_checkpointing(
     questions: list[QuestionInput],
     log_path: Path,
-    force_reingest: bool = False,
     batch_size: int = BATCH_SIZE,
 ) -> int:
     """Run pipeline with JSONL checkpointing for resume capability.
@@ -103,14 +100,13 @@ async def run_pipeline_with_checkpointing(
     Args:
         questions: List of questions to process (already filtered for unprocessed)
         log_path: Path to JSONL log file for checkpointing
-        force_reingest: If True, force re-ingestion of knowledge base
         batch_size: Number of concurrent questions to process
 
     Returns:
         Count of newly processed questions
     """
-    log_pipeline("Initializing knowledge base...")
-    ingest_all_data(force=force_reingest)
+    log_pipeline("Loading pre-built vector store...")
+    get_vector_store()
 
     questions = sort_questions_by_qid(questions)
     log_pipeline(f"Processing {len(questions)} questions in qid order...")
@@ -163,7 +159,7 @@ async def run_pipeline_with_checkpointing(
 
                 log_done(f"{q.qid}: {answer} (Route: {route})")
                 processed_count += 1
-                await asyncio.sleep(150)
+                # await asyncio.sleep(150)
 
             except Exception as e:
                 if is_rate_limit_error(e):

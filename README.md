@@ -191,21 +191,71 @@ This pipeline is designed to be **fault-tolerant**:
       * Run the same command again (`uv run python main.py`).
       * The system detects the existing `inference_log.jsonl`, calculates which questions are missing, and **only processes the remaining questions**.
 
+
+
+### Run Instructions for VNPT-AI orgarnizers
+
+To evaluate the submission, please mount the folder containing `private_test.json` and provide the necessary API Keys via environment variables.
+
+**⚠️ Important Notes:**
+
+1. **Volume Mounting:** Do **NOT** mount your data folder to `/code`. This will overwrite the application source code inside the container. Please mount to a separate directory (e.g., `/data`) as shown in the command below.
+2. **API Keys:** The system requires **all 3 sets of keys** (Large, Small, and Embedding) to function correctly.
+
+**Standard Docker Run Command:**
+
+*Assumption: Your `private_test.json` is located at `/path/to/evaluation_data/` on the host machine.*
+
+```bash
+docker run --rm --gpus all \
+  # 1. Mount data to a separate folder (e.g., /data) to preserve source code at /code
+  -v /path/to/evaluation_data:/data \
+  \
+  # 2. Point the system to the mounted input/output paths
+  -e INPUT_FILE_PATH="/data/private_test.json" \
+  -e DATA_OUTPUT_DIR="/data" \
+  \
+  # 3. Enable VNPT API Mode
+  -e USE_VNPT_API="True" \
+  \
+  # 4. Provide API Credentials (REQUIRED)
+  -e VNPT_LARGE_AUTHORIZATION="Bearer <YOUR_TOKEN>" \
+  -e VNPT_LARGE_TOKEN_ID="<YOUR_TOKEN_ID>" \
+  -e VNPT_LARGE_TOKEN_KEY="<YOUR_TOKEN_KEY>" \
+  \
+  -e VNPT_SMALL_AUTHORIZATION="Bearer <YOUR_TOKEN>" \
+  -e VNPT_SMALL_TOKEN_ID="<YOUR_TOKEN_ID>" \
+  -e VNPT_SMALL_TOKEN_KEY="<YOUR_TOKEN_KEY>" \
+  \
+  -e VNPT_EMBEDDING_AUTHORIZATION="Bearer <YOUR_TOKEN>" \
+  -e VNPT_EMBEDDING_TOKEN_ID="<YOUR_TOKEN_ID>" \
+  -e VNPT_EMBEDDING_TOKEN_KEY="<YOUR_TOKEN_KEY>" \
+  \
+  vnpt-ai-submission
+
+```
+
+### 3. Output Verification
+
+After the container finishes execution (look for `[Done] Predictions saved...` in the logs), the result file `submission.csv` will be generated in your host directory (`/path/to/evaluation_data/submission.csv`).
+
 ## Project Structure
 
 ```
 vnpt-ai/
 ├── data/                 
-│   ├── qdrant_storage/   # Persistent Vector DB
+│   ├── qdrant_storage/   # Persistent Vector DB (pre-built)
 │   └── crawl/            # Crawled raw data
 ├── src/
 │   ├── nodes/            # Logic for Router, RAG, Logic, Direct nodes
 │   ├── data_processing/  # Answer extraction, formatting, models
 │   ├── templates/        # Jinja2 prompt templates (rag.j2, logic_solver.j2, etc.)
 │   ├── utils/            # Utilities (Checkpointing, Ingestion, LLM, Embeddings)
-│   ├── pipeline.py       # Core execution logic & Resume handling
+│   ├── pipeline.py       # Core execution logic (read-only inference)
 │   └── graph.py          # LangGraph workflow definition
-├── app.py                # Deployment entry point
+├── scripts/
+│   └── ingest.py         # Build step script (run before Docker build)
+├── predict.py            # Deployment entry point
 ├── main.py               # Development entry point
 └── pyproject.toml        # Dependencies
 ```

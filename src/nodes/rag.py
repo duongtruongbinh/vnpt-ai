@@ -32,7 +32,7 @@ def _rerank_documents(query: str, docs: list, top_k: int = 3) -> list:
     # Build document list for reranking prompt
     doc_list = ""
     for i, doc in enumerate(docs):
-        content_preview = doc.page_content[:500].replace("\n", " ")
+        content_preview = doc.page_content[:350].replace("\n", " ")
         doc_list += f"[{i}] {content_preview}...\n\n"
     
     rerank_system = (

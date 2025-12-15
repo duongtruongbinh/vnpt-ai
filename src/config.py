@@ -20,7 +20,7 @@ class Settings(BaseSettings):
     """Application settings with environment variable support."""
 
     use_vnpt_api: bool = Field(
-        default=False,
+        default=True,
         alias="USE_VNPT_API",
         description="If True, use VNPT API; otherwise use local HuggingFace models",
     )
@@ -103,7 +103,7 @@ class Settings(BaseSettings):
         alias="QDRANT_COLLECTION",
     )
     vector_db_path: str = Field(
-        default="",
+        default="/code/data/qdrant_storage",
         alias="VECTOR_DB_PATH",
     )
 

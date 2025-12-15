@@ -67,7 +67,7 @@ class VNPTEmbeddings(Embeddings):
         if not texts:
             return []
         
-        batch_size = 64 
+        batch_size = 256
         all_embeddings = []
         
         with tqdm(total=len(texts), desc="Embedding API", unit="chunk", leave=False) as pbar:

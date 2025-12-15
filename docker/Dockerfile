@@ -1,47 +1,35 @@
-FROM nvidia/cuda:12.2.0-devel-ubuntu20.04
+FROM python:3.12-slim
 
-# Install Python 3.12 and basic utilities
-RUN apt-get update && apt-get install -y \
-    curl \
-    python3 \
-    python3-pip \
+# Install basic utilities and git
+RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
+    curl \
     && rm -rf /var/lib/apt/lists/*
-
-RUN ln -s /usr/bin/python3 /usr/bin/python
-
-# Install uv
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
 WORKDIR /code
 
-# Copy dependency files
-COPY pyproject.toml uv.lock ./
-
 # Install dependencies
-RUN uv sync --frozen --no-dev
+COPY requirements.txt ./
+RUN pip3 install --no-cache-dir --upgrade pip && \ 
+    pip3 install --no-cache-dir -r requirements.txt
 
-# Copy application code
+# Copy source code
 COPY src/ ./src/
 COPY predict.py ./
-COPY pyproject.toml ./
+COPY scripts/inference.sh ./inference.sh
+RUN chmod +x inference.sh
 
-# Copy data folder (knowledge base data)
-COPY data/ ./data/
+# Copy knowledge base data
+COPY data/qdrant_storage/ ./data/qdrant_storage/
 
 # Set environment variables
-ENV PATH="/code/.venv/bin:$PATH"
 ENV PYTHONUNBUFFERED=1
-ENV DATA_INPUT_DIR=/data
-ENV DATA_OUTPUT_DIR=/output
 ENV PYTHONPATH=/code
+ENV DATA_INPUT_DIR=/code
+ENV DATA_OUTPUT_DIR=/code
+ENV INPUT_FILE_PATH="/code/private_test.json"
+ENV OUTPUT_FILE_PATH="/code/submission.csv"
+ENV VECTOR_DB_PATH=/code/data/qdrant_storage
 
-# Create directories for input/output
-RUN mkdir -p /data /output
-
-# Copy entrypoint script
-COPY docker/entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
-
-ENTRYPOINT ["/entrypoint.sh"]
-CMD ["python", "predict.py"]
+# Entrypoint
+CMD ["bash", "inference.sh"]
