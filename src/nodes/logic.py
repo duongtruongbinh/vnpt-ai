@@ -6,7 +6,8 @@ from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 from langchain_experimental.utilities import PythonREPL
 
 from src.data_processing.answer import extract_answer
-from src.state import GraphState, format_choices, get_choices_from_state
+from src.data_processing.formatting import format_choices
+from src.state import GraphState
 from src.utils.llm import get_large_model
 from src.utils.logging import print_log
 from src.utils.prompts import load_prompt
@@ -50,7 +51,7 @@ def _indent_code(code: str) -> str:
     return "\n".join(f"        {line}" for line in code.splitlines())
 
 
-def _fallback_text_reasoning(llm, question: str, choices_text: str, max_choices: int) -> dict:
+def _fallback_text_reasoning(llm, question: str, choices_text: str) -> dict:
     """Fallback to CoT reasoning when code execution fails."""
     print_log("        [Logic] Falling back to CoT reasoning...")
 
@@ -105,8 +106,8 @@ def _request_final_answer(llm, question: str, choices_text: str, computed_result
 def logic_solver_node(state: GraphState) -> dict:
     """Solve math/logic questions using Python code execution."""
     llm = get_large_model()
-    all_choices = get_choices_from_state(state)
-    max_choices = len(all_choices) or 4
+    all_choices = state["all_choices"]
+    num_choices = len(all_choices)
     choices_text = format_choices(all_choices)
 
     system_prompt = load_prompt("logic_solver.j2", "system")
@@ -188,7 +189,7 @@ def logic_solver_node(state: GraphState) -> dict:
             continue
 
         # Check if current step contains an explicit answer
-        step_answer = extract_answer(content, max_choices=max_choices)
+        step_answer = extract_answer(content, num_choices=num_choices)
         if step_answer:
             print_log(f"        [Logic] Step {step+1}: Found explicit answer: {step_answer}")
             combined_raw = "\n---STEP---\n".join(step_texts)
@@ -206,7 +207,7 @@ def logic_solver_node(state: GraphState) -> dict:
     
     # Try fallback text reasoning with error handling
     try:
-        fallback_result = _fallback_text_reasoning(llm, state["question"], choices_text, max_choices)
+        fallback_result = _fallback_text_reasoning(llm, state["question"], choices_text)
         fallback_text = fallback_result["text"]
         if fallback_text:
             combined_raw += "\n---FALLBACK---\n" + fallback_text
@@ -215,7 +216,7 @@ def logic_solver_node(state: GraphState) -> dict:
         fallback_text = ""
     
     # Extract answer from the entire combined text (takes LAST explicit answer)
-    final_answer = extract_answer(combined_raw, max_choices=max_choices)
+    final_answer = extract_answer(combined_raw, num_choices=num_choices)
     
     if final_answer:
         print_log(f"        [Logic] Extracted final answer from combined text: {final_answer}")
@@ -228,7 +229,7 @@ def logic_solver_node(state: GraphState) -> dict:
         strict_response = _request_final_answer(llm, state["question"], choices_text, computed_str)
         combined_raw += "\n---FINAL---\n" + strict_response
         
-        final_answer = extract_answer(strict_response, max_choices=max_choices)
+        final_answer = extract_answer(strict_response, num_choices=num_choices)
         if final_answer:
             print_log(f"        [Logic] Final strict answer: {final_answer}")
             return {"answer": final_answer, "raw_response": combined_raw, "route": "math"}

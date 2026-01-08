@@ -5,7 +5,8 @@ from typing import Literal
 
 from langchain_core.prompts import ChatPromptTemplate
 
-from src.state import GraphState, format_choices, get_choices_from_state
+from src.data_processing.formatting import format_choices
+from src.state import GraphState
 from src.utils.llm import get_small_model
 from src.utils.logging import print_log
 from src.utils.prompts import load_prompt
@@ -13,7 +14,7 @@ from src.utils.prompts import load_prompt
 
 def _find_refusal_option(state: GraphState) -> str | None:
     """Find refusal option in choices and return corresponding letter."""
-    all_choices = get_choices_from_state(state)
+    all_choices = state["all_choices"]
     option_labels = list(string.ascii_uppercase[:len(all_choices)])
     
     refusal_patterns = [
@@ -33,7 +34,7 @@ def _find_refusal_option(state: GraphState) -> str | None:
 
 def _classify_with_llm(state: GraphState) -> str:
     """Classify question using LLM."""
-    choices_text = format_choices(get_choices_from_state(state))
+    choices_text = format_choices(state["all_choices"])
     llm = get_small_model()
     
     system_prompt = load_prompt("router.j2", "system")

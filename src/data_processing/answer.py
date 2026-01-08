@@ -12,7 +12,7 @@ import string
 from src.utils.logging import print_log
 
 
-def extract_answer(response: str, max_choices: int = 4) -> str | None:
+def extract_answer(response: str, num_choices: int = 4) -> str | None:
     """Extract answer letter from LLM response using strict explicit answer lines.
     
     Only accepts answers from explicit final-answer lines with colon:
@@ -23,7 +23,7 @@ def extract_answer(response: str, max_choices: int = 4) -> str | None:
     
     Args:
         response: Response text from LLM
-        max_choices: Maximum number of valid choices
+        num_choices: Number of valid choices
         
     Returns:
         Answer letter (A, B, C, D) or None if no explicit answer found
@@ -31,7 +31,7 @@ def extract_answer(response: str, max_choices: int = 4) -> str | None:
     if not response:
         return None
     
-    valid_labels = string.ascii_uppercase[:max_choices]
+    valid_labels = string.ascii_uppercase[:num_choices]
     
     # Pattern for primary labels: "Đáp án:" or "Answer:" (highest priority)
     primary_pattern = r"^[ \t]*\**(?:Đáp\s*án|Answer)[ \t]*[:：][ \t]*\**([A-Z])\b"
@@ -140,5 +140,5 @@ def extract_and_normalize(
     Returns:
         Normalized answer string
     """
-    extracted = extract_answer(response, max_choices=num_choices)
+    extracted = extract_answer(response, num_choices=num_choices)
     return normalize_answer(extracted, num_choices, question_id, default)

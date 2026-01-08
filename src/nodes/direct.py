@@ -3,7 +3,8 @@
 from langchain_core.prompts import ChatPromptTemplate
 
 from src.data_processing.answer import extract_answer
-from src.state import GraphState, format_choices, get_choices_from_state
+from src.data_processing.formatting import format_choices
+from src.state import GraphState
 from src.utils.llm import get_large_model
 from src.utils.logging import print_log
 from src.utils.prompts import load_prompt
@@ -13,7 +14,7 @@ def direct_answer_node(state: GraphState) -> dict:
     """Answer questions directly using Large Model (Skip Retrieval)."""
     print_log("        [Direct] Processing Reading Comprehension/General Question...")
 
-    all_choices = get_choices_from_state(state)
+    all_choices = state["all_choices"]
     choices_text = format_choices(all_choices)
     
     llm = get_large_model()
@@ -32,6 +33,6 @@ def direct_answer_node(state: GraphState) -> dict:
     content = response.content.strip()
     print_log(f"        [Direct] Reasoning: {content}...")
 
-    answer = extract_answer(content, max_choices=len(all_choices) or 4)
+    answer = extract_answer(content, num_choices=len(all_choices) or 4)
     print_log(f"        [Direct] Final Answer: {answer}")
     return {"answer": answer, "raw_response": content}

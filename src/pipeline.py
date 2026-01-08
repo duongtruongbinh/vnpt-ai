@@ -2,7 +2,6 @@
 
 import asyncio
 import csv
-import string
 import sys
 import time
 from pathlib import Path
@@ -133,18 +132,16 @@ async def run_pipeline_with_checkpointing(
 
             try:
                 result = await graph.ainvoke(state)
-                answer = result.get("answer", "A")
                 route = result.get("route", "unknown")
                 raw_response = result.get("raw_response", "")
                 context = result.get("context", "")
 
-                num_choices = len(q.choices)
-                option_labels = string.ascii_uppercase
-                valid_answers = option_labels[:num_choices]
-
-                if answer is None or answer not in valid_answers:
-                    print_log(f"        [Warning] Invalid answer '{answer}' for {q.qid}, defaulting to A")
-                    answer = "A"
+                answer = normalize_answer(
+                    answer=result.get("answer"),
+                    num_choices=len(q.choices),
+                    question_id=q.qid,
+                    default="A",
+                )
 
                 log_entry = InferenceLogEntry(
                     qid=q.qid,

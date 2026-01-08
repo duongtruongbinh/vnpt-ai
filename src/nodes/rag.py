@@ -6,7 +6,8 @@ from langchain_core.prompts import ChatPromptTemplate
 
 from src.config import settings
 from src.data_processing.answer import extract_answer
-from src.state import GraphState, format_choices, get_choices_from_state
+from src.data_processing.formatting import format_choices
+from src.state import GraphState
 from src.utils.ingestion import get_vector_store
 from src.utils.llm import get_large_model, get_small_model
 from src.utils.logging import print_log
@@ -103,7 +104,7 @@ def knowledge_rag_node(state: GraphState) -> dict:
         if reranked_docs:
             print_log(f"        [RAG] Using {len(reranked_docs)} reranked docs. Top: \"{reranked_docs[0].page_content[:80]}...\"")
 
-    all_choices = get_choices_from_state(state)
+    all_choices = state["all_choices"]
     choices_text = format_choices(all_choices)
 
     llm = get_large_model()
@@ -121,6 +122,6 @@ def knowledge_rag_node(state: GraphState) -> dict:
     content = response.content.strip()
     print_log(f"        [RAG] Reasoning: {content}")
 
-    answer = extract_answer(content, max_choices=len(all_choices) or 4)
+    answer = extract_answer(content, num_choices=len(all_choices) or 4)
     print_log(f"        [RAG] Final Answer: {answer}")
     return {"answer": answer, "context": context, "raw_response": content}
